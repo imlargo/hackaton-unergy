@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -34,7 +35,7 @@ def collect_fingerprint(
     location: str,
     num_samples: int = 5,
     interval: float = 2.0,
-    callback: callable | None = None,
+    callback: Callable[[int, int, int], None] | None = None,
 ) -> list[Fingerprint]:
     """Collect WiFi fingerprints at a given location.
 
