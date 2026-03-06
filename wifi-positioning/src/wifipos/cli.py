@@ -60,7 +60,7 @@ def learn(
     # On macOS the WiFi hardware needs ~5 s between scans to avoid
     # "Resource busy" errors.  Clamp the interval so users don't hit
     # this issue when passing a very small value.
-    min_safe_interval = 5.0
+    min_safe_interval = 3.0
     if interval < min_safe_interval:
         console.print(
             f"[yellow]Note:[/yellow] Interval raised to {min_safe_interval}s "
