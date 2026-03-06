@@ -11,7 +11,7 @@ from wifipos.scanner.base import WifiReading, WifiScanner
 logger = logging.getLogger(__name__)
 
 MAX_SCAN_RETRIES = 3
-INITIAL_RETRY_DELAY = 2.0
+INITIAL_RETRY_DELAY = 4.0
 
 
 class MacOSScanner(WifiScanner):

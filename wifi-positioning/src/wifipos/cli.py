@@ -46,11 +46,22 @@ def _get_scanner():
 def learn(
     location: str = typer.Argument(..., help="Name of the location to learn"),
     samples: int = typer.Option(10, "--samples", "-s", help="Number of WiFi samples to collect"),
-    interval: float = typer.Option(3.5, "--interval", "-i", help="Seconds between samples"),
+    interval: float = typer.Option(5.0, "--interval", "-i", help="Seconds between samples"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
 ) -> None:
     """Learn a location by collecting WiFi fingerprints."""
     _setup_logging(verbose)
+
+    # On macOS the WiFi hardware needs ~5 s between scans to avoid
+    # "Resource busy" errors.  Clamp the interval so users don't hit
+    # this issue when passing a very small value.
+    min_safe_interval = 5.0
+    if interval < min_safe_interval:
+        console.print(
+            f"[yellow]Note:[/yellow] Interval raised to {min_safe_interval}s "
+            f"(WiFi hardware needs time between scans)."
+        )
+        interval = min_safe_interval
 
     scanner = _get_scanner()
     db = Database()

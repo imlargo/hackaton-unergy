@@ -54,6 +54,8 @@ def collect_fingerprint(
         A list of Fingerprint objects, one per scan.
     """
     fingerprints: list[Fingerprint] = []
+    # After a scan failure, wait longer to let the WiFi hardware recover.
+    failure_cooldown = max(interval * 2, 1.0)
 
     for i in range(num_samples):
         try:
@@ -64,7 +66,7 @@ def collect_fingerprint(
                 f"skipping this sample. ({e})"
             )
             if i < num_samples - 1:
-                time.sleep(interval)
+                time.sleep(failure_cooldown)
             continue
 
         if not readings:
