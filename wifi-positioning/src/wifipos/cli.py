@@ -46,7 +46,7 @@ def _get_scanner():
 def learn(
     location: str = typer.Argument(..., help="Name of the location to learn"),
     samples: int = typer.Option(10, "--samples", "-s", help="Number of WiFi samples to collect"),
-    interval: float = typer.Option(5.0, "--interval", "-i", help="Seconds between samples"),
+    interval: float = typer.Option(1.0, "--interval", "-i", help="Seconds between samples"),
     walk: bool = typer.Option(False, "--walk", "-w", help="Walk mode: move around the room while collecting"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
 ) -> None:

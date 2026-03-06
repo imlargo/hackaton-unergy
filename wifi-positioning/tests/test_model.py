@@ -333,7 +333,7 @@ class TestAugmentFingerprints:
                 "timestamp": "",
             },
         ]
-        result = augment_fingerprints(originals, num_augmented=5, noise_std=5.0)
+        result = augment_fingerprints(originals, num_augmented=5, noise_std=1.0)
         # At least some augmented copies should differ from the original
         augmented_rssi = [r["raw_data"][0]["rssi"] for r in result[1:]]
         assert any(r != -50 for r in augmented_rssi)
@@ -348,7 +348,7 @@ class TestAugmentFingerprints:
                 "timestamp": "",
             },
         ]
-        result = augment_fingerprints(originals, num_augmented=10, noise_std=5.0)
+        result = augment_fingerprints(originals, num_augmented=10, noise_std=1.0)
         for fp in result:
             rssi = fp["raw_data"][0]["rssi"]
             assert -100.0 <= rssi <= 0.0
