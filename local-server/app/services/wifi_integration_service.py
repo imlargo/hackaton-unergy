@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 _WIFIPOS_AVAILABLE = False
 
 try:
+    from wifipos.model.predictor import Predictor  # noqa: F401
     from wifipos.scanner import WifiReading, WifiScanner  # noqa: F401
+    from wifipos.storage.database import Database as WifiDatabase  # noqa: F401
     from wifipos.utils.platform import get_scanner  # noqa: F401
 
     _WIFIPOS_AVAILABLE = True
@@ -130,10 +132,7 @@ class WiFiIntegrationService:
             }
 
         try:
-            from wifipos.model.predictor import Predictor
-            from wifipos.storage.database import Database
-
-            db = Database()
+            db = WifiDatabase()
             predictor = Predictor(db)
             prediction = predictor.predict(self._scanner)
             return {
