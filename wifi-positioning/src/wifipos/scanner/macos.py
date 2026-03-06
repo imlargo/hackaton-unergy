@@ -24,7 +24,8 @@ class MacOSScanner(WifiScanner):
         except ImportError as e:
             raise RuntimeError(
                 "pyobjc-framework-CoreWLAN is required on macOS. "
-                "Install it with: pip install pyobjc-framework-CoreWLAN"
+                "Try reinstalling the package: pip install -e . "
+                "or install it manually: pip install pyobjc-framework-CoreWLAN"
             ) from e
 
         self._interface = CoreWLAN.CWWiFiClient.sharedWiFiClient().interface()

@@ -16,10 +16,7 @@ cd wifi-positioning
 pip install -e .
 ```
 
-> **Nota macOS:** Si estás en macOS, instala también el soporte para Location Services:
-> ```bash
-> pip install -e ".[macos]"
-> ```
+> **Nota:** En macOS, las dependencias de CoreWLAN y CoreLocation se instalan automáticamente.
 
 > **Nota desarrollo:** Para correr los tests, instala las dependencias de desarrollo:
 > ```bash
