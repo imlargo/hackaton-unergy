@@ -60,7 +60,7 @@ def learn(
     # On macOS the WiFi hardware needs ~5 s between scans to avoid
     # "Resource busy" errors.  Clamp the interval so users don't hit
     # this issue when passing a very small value.
-    min_safe_interval = 3.0
+    min_safe_interval = 1.0
     if interval < min_safe_interval:
         console.print(
             f"[yellow]Note:[/yellow] Interval raised to {min_safe_interval}s "
@@ -227,7 +227,7 @@ def predict(
 
 @app.command()
 def track(
-    interval: float = typer.Option(3.0, "--interval", "-i", help="Seconds between predictions"),
+    interval: float = typer.Option(1.0, "--interval", "-i", help="Seconds between predictions"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
 ) -> None:
     """Predict continuously (real-time tracking)."""
