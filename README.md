@@ -57,9 +57,24 @@ wifipos learn cocina --samples 10 --interval 2
 wifipos learn sala --samples 10 --interval 2
 ```
 
-Cada comando toma 10 muestras WiFi con 2 segundos entre cada una. Verás una barra de progreso mientras se recolectan.
+Verás una barra de progreso mientras se recolectan las muestras.
 
-> **💡 Tip:** Entre más muestras tomes, mejor será la predicción. Para mejor precisión usa `--samples 15` o `--samples 20`.
+#### ¿Qué significan `--samples 10` y `--interval 2`?
+
+| Parámetro | Qué hace | Ejemplo |
+|-----------|----------|---------|
+| `--samples N` (o `-s N`) | **Cuántas muestras WiFi tomar.** Cada muestra es un escaneo completo de todas las redes WiFi visibles y sus intensidades de señal (RSSI). Con `--samples 10` el sistema escanea 10 veces las redes WiFi desde esa ubicación. | `--samples 10` → 10 escaneos WiFi |
+| `--interval S` (o `-i S`) | **Segundos de espera entre cada muestra.** Le da tiempo a las señales WiFi de variar naturalmente (las señales fluctúan por personas moviéndose, puertas abriéndose, etc). Con `--interval 2` espera 2 segundos entre cada escaneo. | `--interval 2` → 2 segundos entre escaneos |
+
+**Ejemplo concreto:** `wifipos learn cocina --samples 10 --interval 2` significa:
+> *"Escanea las redes WiFi 10 veces desde la cocina, esperando 2 segundos entre cada escaneo"* (toma ~20 segundos en total).
+
+**¿Cuántas muestras necesito?**
+- **10 muestras** → suficiente para probar rápido
+- **15-20 muestras** → recomendado para buena precisión
+- **30+ muestras** → máxima precisión (toma más tiempo)
+
+> **💡 Tip:** Si las predicciones no son precisas, vuelve a cada habitación y toma más muestras con `--samples 20`. Las muestras nuevas se suman a las anteriores.
 
 ### Paso 2: Verificar las muestras recolectadas
 
