@@ -466,5 +466,84 @@ def tips() -> None:
     console.print()
 
 
+@app.command()
+def guide() -> None:
+    """Step-by-step guide: clean everything and retrain from scratch."""
+    console.print("\n[bold blue]═══ Complete Guide: Reset & Retrain ═══[/bold blue]\n")
+
+    # Step 1
+    console.print("[bold yellow]Step 1.[/bold yellow] [bold]Clean all previous data[/bold]")
+    console.print("   Remove all fingerprints and models to start fresh:\n")
+    console.print("   [green]$ wifipos reset --confirm[/green]\n")
+
+    # Step 2
+    console.print("[bold yellow]Step 2.[/bold yellow] [bold]Learn each location (walk around!)[/bold]")
+    console.print(
+        "   Go to each room and collect samples. Use [bold]--walk[/bold] so you"
+    )
+    console.print(
+        "   can [cyan]move around the room[/cyan] while it collects — this way the"
+    )
+    console.print(
+        "   model learns signals from every corner, not just one spot.\n"
+    )
+    console.print("   [green]$ wifipos learn kitchen --walk[/green]")
+    console.print("   [dim]   → Walk slowly around the kitchen (~100 s)[/dim]\n")
+    console.print("   [green]$ wifipos learn bedroom --walk[/green]")
+    console.print("   [dim]   → Walk around the bedroom[/dim]\n")
+    console.print("   [green]$ wifipos learn living --walk[/green]")
+    console.print("   [dim]   → Walk around the living room[/dim]\n")
+    console.print(
+        "   Repeat for every room you want to detect."
+    )
+    console.print(
+        "   [dim]Tip: for even better accuracy, increase samples:[/dim]"
+    )
+    console.print("   [dim]$ wifipos learn kitchen --walk --samples 40[/dim]\n")
+
+    # Step 3
+    console.print("[bold yellow]Step 3.[/bold yellow] [bold]Check your data[/bold]")
+    console.print("   Verify that every location has enough fingerprints:\n")
+    console.print("   [green]$ wifipos locations[/green]\n")
+    console.print("   [dim]You should see ≥ 20 fingerprints per room.[/dim]\n")
+
+    # Step 4
+    console.print("[bold yellow]Step 4.[/bold yellow] [bold]Train the model[/bold]")
+    console.print("   Build the ML model from your collected data:\n")
+    console.print("   [green]$ wifipos train[/green]\n")
+    console.print(
+        "   [dim]It will auto-select the best classifier and show accuracy.[/dim]\n"
+    )
+
+    # Step 5
+    console.print("[bold yellow]Step 5.[/bold yellow] [bold]Test it![/bold]")
+    console.print("   Walk to any room and check the prediction:\n")
+    console.print("   [green]$ wifipos predict[/green]\n")
+    console.print("   Or use real-time tracking:\n")
+    console.print("   [green]$ wifipos track[/green]\n")
+
+    # Summary
+    console.print("[bold blue]═══ Quick Summary ═══[/bold blue]\n")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Step", justify="right", style="yellow")
+    table.add_column("Command")
+    table.add_column("What it does")
+    table.add_row("1", "wifipos reset --confirm", "Delete all old data")
+    table.add_row("2", "wifipos learn room --walk", "Collect (repeat per room)")
+    table.add_row("3", "wifipos locations", "Verify fingerprint counts")
+    table.add_row("4", "wifipos train", "Train the ML model")
+    table.add_row("5", "wifipos predict", "Test a prediction")
+    console.print(table)
+    console.print()
+
+    console.print("[bold]Other useful commands:[/bold]")
+    console.print("   • [green]wifipos forget kitchen[/green]  — delete only one location")
+    console.print("   • [green]wifipos status[/green]          — show model accuracy")
+    console.print("   • [green]wifipos tips[/green]            — training tips for best accuracy")
+    console.print("   • [green]wifipos export data.csv[/green] — export data to CSV")
+    console.print()
+
+
 if __name__ == "__main__":
     app()
