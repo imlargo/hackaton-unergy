@@ -14,7 +14,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from wifipos.model.fingerprint import build_feature_matrix
+from wifipos.model.fingerprint import augment_fingerprints, build_feature_matrix
 from wifipos.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -66,8 +66,9 @@ def train_model(db: Database) -> TrainingResult:
                 f"Use 'wifipos learn {location}' to collect more samples."
             )
 
-    # Build feature matrix
-    X_list, y_list, bssid_list = build_feature_matrix(fingerprints)
+    # Build feature matrix (with augmentation for better in-room robustness)
+    augmented = augment_fingerprints(fingerprints, num_augmented=2, noise_std=3.0)
+    X_list, y_list, bssid_list = build_feature_matrix(augmented)
     X = np.array(X_list)
     y_raw = np.array(y_list)
 
@@ -89,7 +90,9 @@ def train_model(db: Database) -> TrainingResult:
     # Define classifiers to evaluate
     classifiers = {
         "RandomForest": RandomForestClassifier(n_estimators=150, random_state=42),
-        "KNN": KNeighborsClassifier(n_neighbors=min(5, len(X) - 1)),
+        "KNN": KNeighborsClassifier(
+            n_neighbors=min(5, len(X) - 1), weights="distance",
+        ),
         "GradientBoosting": GradientBoostingClassifier(n_estimators=100, random_state=42),
     }
 
@@ -109,10 +112,14 @@ def train_model(db: Database) -> TrainingResult:
             logger.warning(f"Failed to evaluate {name}: {e}")
             comparison_results[name] = 0.0
 
-    # Train the default RandomForest model
+    # Select the best classifier based on cross-validation accuracy
+    best_name = max(comparison_results, key=comparison_results.get)  # type: ignore[arg-type]
+    best_clf = classifiers[best_name]
+    logger.info(f"Auto-selected best classifier: {best_name} (CV={comparison_results[best_name]:.4f})")
+
     best_pipeline = Pipeline([
         ("scaler", StandardScaler()),
-        ("classifier", RandomForestClassifier(n_estimators=150, random_state=42)),
+        ("classifier", best_clf),
     ])
     best_pipeline.fit(X, y)
 
@@ -136,7 +143,7 @@ def train_model(db: Database) -> TrainingResult:
         "locations": locations,
         "feature_count": len(bssid_list),
         "sample_count": len(X),
-        "classifier": "RandomForest",
+        "classifier": best_name,
         "comparison": comparison_results,
     }
 
@@ -148,6 +155,6 @@ def train_model(db: Database) -> TrainingResult:
         locations=locations,
         feature_count=len(bssid_list),
         sample_count=len(X),
-        classifier_name="RandomForest",
+        classifier_name=best_name,
         comparison_results=comparison_results,
     )

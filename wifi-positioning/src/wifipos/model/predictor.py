@@ -59,16 +59,23 @@ class Predictor:
             f"with {len(self._bssid_list)} features"
         )
 
-    def predict(self, scanner: WifiScanner) -> Prediction:
+    def predict(self, scanner: WifiScanner, num_scans: int = 3) -> Prediction:
         """Perform a single location prediction.
+
+        Takes multiple WiFi scans and averages the RSSI values to reduce noise
+        and improve prediction stability.
 
         Args:
             scanner: The WiFi scanner to use for the current scan.
+            num_scans: Number of scans to average (default 3).
 
         Returns:
             A Prediction with the most likely location and probabilities.
         """
-        readings = scanner.scan()
+        if num_scans > 1:
+            readings = scanner.scan_averaged(num_scans=num_scans, interval=1.0)
+        else:
+            readings = scanner.scan()
 
         if not readings:
             logger.warning("No WiFi networks detected. Prediction may be unreliable.")

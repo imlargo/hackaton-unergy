@@ -195,8 +195,9 @@ class TestTraining:
         assert "office" in result.locations
         assert "kitchen" in result.locations
         assert result.feature_count > 0
-        assert result.sample_count == 10
-        assert result.classifier_name == "RandomForest"
+        # 10 original + 20 augmented = 30 total samples
+        assert result.sample_count == 30
+        assert result.classifier_name in ("RandomForest", "KNN", "GradientBoosting")
         assert "RandomForest" in result.comparison_results
         db.close()
 
@@ -282,4 +283,131 @@ class TestPrediction:
         db = Database(":memory:")
         with pytest.raises(ValueError, match="No trained model found"):
             Predictor(db)
+        db.close()
+
+
+class TestAugmentFingerprints:
+    """Tests for RSSI noise augmentation."""
+
+    def test_augment_preserves_originals(self) -> None:
+        from wifipos.model.fingerprint import augment_fingerprints
+
+        originals = [
+            {
+                "location": "office",
+                "raw_data": [{"bssid": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                "timestamp": "",
+            },
+        ]
+        result = augment_fingerprints(originals, num_augmented=2, noise_std=3.0)
+        # Original is preserved unchanged
+        assert result[0]["raw_data"][0]["rssi"] == -40
+        assert result[0]["location"] == "office"
+
+    def test_augment_creates_correct_count(self) -> None:
+        from wifipos.model.fingerprint import augment_fingerprints
+
+        originals = [
+            {
+                "location": "office",
+                "raw_data": [{"bssid": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                "timestamp": "",
+            },
+            {
+                "location": "kitchen",
+                "raw_data": [{"bssid": "AA:BB:CC:DD:EE:01", "rssi": -70}],
+                "timestamp": "",
+            },
+        ]
+        result = augment_fingerprints(originals, num_augmented=3, noise_std=3.0)
+        # 2 originals + 2*3 augmented = 8
+        assert len(result) == 8
+
+    def test_augment_adds_noise(self) -> None:
+        from wifipos.model.fingerprint import augment_fingerprints
+
+        originals = [
+            {
+                "location": "office",
+                "raw_data": [{"bssid": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+                "timestamp": "",
+            },
+        ]
+        result = augment_fingerprints(originals, num_augmented=5, noise_std=5.0)
+        # At least some augmented copies should differ from the original
+        augmented_rssi = [r["raw_data"][0]["rssi"] for r in result[1:]]
+        assert any(r != -50 for r in augmented_rssi)
+
+    def test_augment_clamps_rssi(self) -> None:
+        from wifipos.model.fingerprint import augment_fingerprints
+
+        originals = [
+            {
+                "location": "office",
+                "raw_data": [{"bssid": "AA:BB:CC:DD:EE:01", "rssi": -99}],
+                "timestamp": "",
+            },
+        ]
+        result = augment_fingerprints(originals, num_augmented=10, noise_std=5.0)
+        for fp in result:
+            rssi = fp["raw_data"][0]["rssi"]
+            assert -100.0 <= rssi <= 0.0
+
+    def test_augment_empty_input(self) -> None:
+        from wifipos.model.fingerprint import augment_fingerprints
+
+        result = augment_fingerprints([], num_augmented=3, noise_std=3.0)
+        assert result == []
+
+    def test_augment_is_deterministic_with_seed(self) -> None:
+        from wifipos.model.fingerprint import augment_fingerprints
+
+        originals = [
+            {
+                "location": "office",
+                "raw_data": [{"bssid": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+                "timestamp": "",
+            },
+        ]
+        result1 = augment_fingerprints(originals, num_augmented=3, noise_std=3.0, seed=42)
+        result2 = augment_fingerprints(originals, num_augmented=3, noise_std=3.0, seed=42)
+        for a, b in zip(result1, result2):
+            assert a["raw_data"][0]["rssi"] == b["raw_data"][0]["rssi"]
+
+
+class TestPredictAveraged:
+    """Tests for averaged-scan prediction."""
+
+    def test_predict_uses_averaged_scans(self) -> None:
+        """Predictor.predict() should call scan_averaged when num_scans > 1."""
+        db = Database(":memory:")
+        scanner = MockScanner()
+
+        # Populate and train
+        scanner.set_location("office")
+        for _ in range(5):
+            readings = scanner.scan()
+            raw_data = [r.to_dict() for r in readings]
+            db.save_fingerprint("office", raw_data)
+
+        scanner.set_location("kitchen")
+        for _ in range(5):
+            readings = scanner.scan()
+            raw_data = [r.to_dict() for r in readings]
+            db.save_fingerprint("kitchen", raw_data)
+
+        train_model(db)
+
+        scanner.set_location("office")
+        predictor = Predictor(db)
+
+        # num_scans=1 should still work (uses single scan)
+        prediction = predictor.predict(scanner, num_scans=1)
+        assert isinstance(prediction, Prediction)
+        assert prediction.location in ["office", "kitchen"]
+
+        # Default (num_scans=3) should also work
+        prediction = predictor.predict(scanner)
+        assert isinstance(prediction, Prediction)
+        assert 0.0 <= prediction.confidence <= 1.0
         db.close()

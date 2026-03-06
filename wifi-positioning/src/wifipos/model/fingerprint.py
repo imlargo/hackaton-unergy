@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -144,3 +145,50 @@ def build_feature_matrix(
         f"{len(set(labels))} locations"
     )
     return feature_matrix, labels, bssid_list
+
+
+def augment_fingerprints(
+    fingerprints: list[dict],
+    num_augmented: int = 2,
+    noise_std: float = 3.0,
+    seed: int | None = 42,
+) -> list[dict]:
+    """Generate augmented copies of fingerprints with Gaussian RSSI noise.
+
+    Simulates the natural signal variation that occurs when a user moves
+    within a room, making the trained model more robust to small positional
+    changes.
+
+    Args:
+        fingerprints: Original fingerprint dicts from the database.
+        num_augmented: Number of noisy copies to create per fingerprint.
+        noise_std: Standard deviation (dB) of Gaussian noise added to RSSI.
+            Typical indoor variation is 2–5 dB.
+        seed: Random seed for reproducibility.  *None* disables seeding.
+
+    Returns:
+        A new list containing all original fingerprints **plus** the
+        augmented copies.
+    """
+    rng = random.Random(seed)
+    augmented: list[dict] = list(fingerprints)
+
+    for fp in fingerprints:
+        for _ in range(num_augmented):
+            new_readings = []
+            for reading in fp["raw_data"]:
+                new_reading = dict(reading)
+                noise = rng.gauss(0, noise_std)
+                new_reading["rssi"] = max(-100.0, min(0.0, reading["rssi"] + noise))
+                new_readings.append(new_reading)
+            augmented.append({
+                "location": fp["location"],
+                "raw_data": new_readings,
+                "timestamp": fp.get("timestamp", ""),
+            })
+
+    logger.info(
+        f"Augmented {len(fingerprints)} fingerprints → {len(augmented)} "
+        f"(+{len(augmented) - len(fingerprints)} synthetic, noise_std={noise_std} dB)"
+    )
+    return augmented

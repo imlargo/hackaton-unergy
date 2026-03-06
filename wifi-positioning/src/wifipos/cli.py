@@ -47,9 +47,14 @@ def learn(
     location: str = typer.Argument(..., help="Name of the location to learn"),
     samples: int = typer.Option(10, "--samples", "-s", help="Number of WiFi samples to collect"),
     interval: float = typer.Option(5.0, "--interval", "-i", help="Seconds between samples"),
+    walk: bool = typer.Option(False, "--walk", "-w", help="Walk mode: move around the room while collecting"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
 ) -> None:
-    """Learn a location by collecting WiFi fingerprints."""
+    """Learn a location by collecting WiFi fingerprints.
+
+    By default, collects samples while you stand still.  Use --walk to
+    collect while moving around the room for better coverage.
+    """
     _setup_logging(verbose)
 
     # On macOS the WiFi hardware needs ~5 s between scans to avoid
@@ -63,11 +68,29 @@ def learn(
         )
         interval = min_safe_interval
 
+    # Walk mode: increase samples so the model sees signal patterns from
+    # many positions within the room.
+    if walk:
+        walk_min_samples = 20
+        if samples < walk_min_samples:
+            samples = walk_min_samples
+
     scanner = _get_scanner()
     db = Database()
 
     console.print(f"\n[bold blue]Learning location:[/bold blue] [green]{location}[/green]")
-    console.print(f"Collecting {samples} samples with {interval}s interval...\n")
+    if walk:
+        console.print(
+            f"[bold cyan]🚶 Walk mode:[/bold cyan] Walk slowly around "
+            f"[green]{location}[/green] while collecting."
+        )
+        console.print(
+            f"  Collecting {samples} samples with {interval}s interval "
+            f"(~{int(samples * interval)}s total)."
+        )
+        console.print("  [dim]Move a few steps between each sample for best coverage.[/dim]\n")
+    else:
+        console.print(f"Collecting {samples} samples with {interval}s interval...\n")
 
     from wifipos.model.fingerprint import collect_fingerprint
 
@@ -84,7 +107,10 @@ def learn(
         def on_sample(idx: int, total: int, ap_count: int) -> None:
             nonlocal collected
             collected += 1
-            progress.update(task, advance=1, description=f"Sample {idx + 1}/{total} ({ap_count} APs)")
+            if walk:
+                progress.update(task, advance=1, description=f"🚶 Sample {idx + 1}/{total} ({ap_count} APs) — keep moving!")
+            else:
+                progress.update(task, advance=1, description=f"Sample {idx + 1}/{total} ({ap_count} APs)")
 
         fingerprints = collect_fingerprint(
             scanner=scanner,
@@ -113,9 +139,8 @@ def learn(
         )
     elif total_fp < min_recommended_fingerprints:
         console.print(
-            "\n[yellow]Tip:[/yellow] For better accuracy, collect from multiple "
-            "positions within the room. Move to a different spot and run "
-            f"[bold]wifipos learn {location}[/bold] again."
+            "\n[yellow]Tip:[/yellow] For better accuracy, try walk mode: "
+            f"[bold]wifipos learn {location} --walk[/bold]"
         )
     db.close()
 
@@ -389,12 +414,24 @@ def tips() -> None:
     """Show training tips for best positioning accuracy."""
     console.print("\n[bold blue]Training Tips for Best Accuracy[/bold blue]\n")
 
-    console.print("[bold]1. Collect from multiple positions within each room[/bold]")
+    console.print("[bold]1. Use walk mode (easiest way to improve accuracy)[/bold]")
     console.print(
-        "   WiFi signals vary even inside the same room. Run [bold]wifipos learn[/bold]"
+        "   Walk slowly around the room while collecting samples."
     )
     console.print(
-        "   several times from [green]different spots[/green] using the [bold]same location name[/bold]:"
+        "   This captures signal variation from every part of the room:"
+    )
+    console.print(
+        '   [dim]$ wifipos learn kitchen --walk[/dim]'
+    )
+    console.print(
+        "   Yes, you can move! Take a few steps between each sample.\n"
+    )
+
+    console.print("[bold]2. Or collect from multiple positions manually[/bold]")
+    console.print(
+        "   Run [bold]wifipos learn[/bold] several times from "
+        "[green]different spots[/green] using the [bold]same location name[/bold]:"
     )
     console.print(
         '   [dim]$ wifipos learn kitchen --samples 10   # center of the room[/dim]'
@@ -409,19 +446,18 @@ def tips() -> None:
         "   Each run [green]adds[/green] fingerprints — it does not replace previous data.\n"
     )
 
-    console.print("[bold]2. Recommended amounts[/bold]")
+    console.print("[bold]3. Recommended amounts[/bold]")
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Scenario")
-    table.add_column("Samples/position", justify="right")
-    table.add_column("Positions/room", justify="right")
+    table.add_column("Method")
     table.add_column("Total/room", justify="right")
-    table.add_row("Quick test", "5", "1", "5")
-    table.add_row("Normal use", "10", "3–4", "30–40")
-    table.add_row("Best accuracy", "15–20", "4–5", "60–100")
+    table.add_row("Quick test", "wifipos learn room -s 5", "5")
+    table.add_row("Normal use", "wifipos learn room --walk", "20")
+    table.add_row("Best accuracy", "wifipos learn room --walk -s 40", "40")
     console.print(table)
     console.print()
 
-    console.print("[bold]3. General tips[/bold]")
+    console.print("[bold]4. General tips[/bold]")
     console.print("   • More data = better accuracy. You can always add more later.")
     console.print("   • Rooms should be physically separated (walls help).")
     console.print("   • Run [bold]wifipos train[/bold] after adding new fingerprints.")

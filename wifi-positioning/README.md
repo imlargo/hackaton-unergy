@@ -62,15 +62,19 @@ pip install -e ".[dev]"
 Walk to each room and run:
 
 ```bash
-# Learn your office (collect 10 WiFi samples)
-wifipos learn office --samples 10
+# Learn your office — walk around the room while collecting!
+wifipos learn office --walk
 
 # Move to the kitchen and learn it
-wifipos learn kitchen --samples 10
+wifipos learn kitchen --walk
 
 # Learn as many locations as you want
-wifipos learn bedroom --samples 10
+wifipos learn bedroom --walk
 ```
+
+> **Tip:** `--walk` mode collects 20 samples while you move around the room.
+> This teaches the model signal patterns from every part of the room,
+> so predictions stay accurate even when you move.
 
 ### 2. Train the model
 
@@ -78,7 +82,8 @@ wifipos learn bedroom --samples 10
 wifipos train
 ```
 
-This trains a RandomForest classifier and reports cross-validation accuracy.
+This auto-selects the best classifier (RandomForest, KNN, or GradientBoosting)
+and reports cross-validation accuracy.
 
 ### 3. Predict your location
 
@@ -117,38 +122,42 @@ wifipos tips
 The accuracy of WiFi positioning depends heavily on how you collect training
 data. Here are the best practices:
 
-### Collect from multiple positions within each room
+### Use walk mode (easiest way)
 
-WiFi signals vary even within a single room. To improve accuracy, run
-`wifipos learn` **multiple times** from **different spots** in the same room:
+Walk slowly around the room while collecting. This is the simplest way to
+get good coverage — **yes, you can move during training!**
 
 ```bash
-# Stand in the center of the kitchen
-wifipos learn kitchen --samples 10
+# Walk around the kitchen while collecting (~100 seconds)
+wifipos learn kitchen --walk
 
-# Move to a corner and run again (same location name!)
-wifipos learn kitchen --samples 10
+# Want more coverage? Increase samples:
+wifipos learn kitchen --walk --samples 40
+```
 
-# Move to another spot and run again
-wifipos learn kitchen --samples 10
+Each sample takes ~5 seconds. Take a few steps between samples so the model
+sees signals from every part of the room.
 
-# Do the same for every room
-wifipos learn office --samples 10   # desk
-wifipos learn office --samples 10   # by the window
-wifipos learn office --samples 10   # near the door
+### Or collect from fixed positions manually
+
+Run `wifipos learn` **multiple times** from **different spots** in the same room:
+
+```bash
+wifipos learn kitchen --samples 10   # center of the room
+wifipos learn kitchen --samples 10   # by the window
+wifipos learn kitchen --samples 10   # near the door
 ```
 
 Each run **adds** fingerprints to the same location — it does not replace
-previous data. This teaches the model the range of signal patterns within the
-room.
+previous data.
 
 ### Recommended amounts
 
-| Scenario | Samples per position | Positions per room | Total per room |
-|----------|--------------------:|-------------------:|---------------:|
-| Quick test | 5 | 1 | 5 |
-| Normal use | 10 | 3–4 | 30–40 |
-| Best accuracy | 15–20 | 4–5 | 60–100 |
+| Scenario | Method | Total per room |
+|----------|--------|---------------:|
+| Quick test | `wifipos learn room -s 5` | 5 |
+| Normal use | `wifipos learn room --walk` | 20 |
+| Best accuracy | `wifipos learn room --walk -s 40` | 40 |
 
 ### General tips
 
