@@ -234,6 +234,46 @@ class TestMacOSScannerTransientErrors:
         assert not MacOSScanner._is_transient_error("Something went wrong")
 
 
+class TestMacOSScannerSSIDFallback:
+    """Tests for SSID-based fallback when BSSIDs are unavailable."""
+
+    def test_synthetic_bssid_is_deterministic(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        bssid1 = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", 6)
+        bssid2 = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", 6)
+        assert bssid1 == bssid2
+
+    def test_synthetic_bssid_differs_by_ssid(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        bssid1 = MacOSScanner._ssid_to_synthetic_bssid("NetworkA", 6)
+        bssid2 = MacOSScanner._ssid_to_synthetic_bssid("NetworkB", 6)
+        assert bssid1 != bssid2
+
+    def test_synthetic_bssid_differs_by_channel(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        bssid1 = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", 6)
+        bssid2 = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", 11)
+        assert bssid1 != bssid2
+
+    def test_synthetic_bssid_starts_with_ssid_prefix(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        bssid = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", 6)
+        assert bssid.startswith("ssid:")
+
+    def test_synthetic_bssid_handles_none_channel(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        bssid = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", None)
+        assert bssid.startswith("ssid:")
+        # Should differ from a known channel
+        bssid_with_ch = MacOSScanner._ssid_to_synthetic_bssid("MyWiFi", 6)
+        assert bssid != bssid_with_ch
+
+
 class TestCollectFingerprintErrorHandling:
     """Tests for collect_fingerprint handling RuntimeError from scanner."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 
@@ -10,7 +11,7 @@ from wifipos.scanner.base import WifiReading, WifiScanner
 logger = logging.getLogger(__name__)
 
 MAX_SCAN_RETRIES = 3
-RETRY_DELAY = 2.0
+INITIAL_RETRY_DELAY = 2.0
 
 
 class MacOSScanner(WifiScanner):
@@ -18,6 +19,8 @@ class MacOSScanner(WifiScanner):
 
     Requires pyobjc-framework-CoreWLAN to be installed.
     On macOS 14+, Location Services authorization is required.
+    When Location Services are unavailable, falls back to SSID-based
+    identification with reduced accuracy.
     """
 
     def __init__(self) -> None:
@@ -38,6 +41,7 @@ class MacOSScanner(WifiScanner):
                 "No WiFi interface found. Ensure WiFi hardware is available."
             )
         self._location_services_warned = False
+        self._ssid_fallback_warned = False
 
     def _check_location_services(self) -> None:
         """Check and warn about Location Services authorization on macOS 14+.
@@ -71,10 +75,30 @@ class MacOSScanner(WifiScanner):
         lower = error_msg.lower()
         return any(kw in lower for kw in transient_keywords)
 
+    @staticmethod
+    def _ssid_to_synthetic_bssid(ssid: str, channel: int | None) -> str:
+        """Generate a deterministic synthetic BSSID from SSID and channel.
+
+        Used as a fallback when real BSSIDs are unavailable (e.g. macOS 14.4+
+        without Location Services).
+
+        Args:
+            ssid: The network SSID.
+            channel: The WiFi channel number, or None.
+
+        Returns:
+            A synthetic BSSID string in the format ``ssid:<hash_prefix>``.
+        """
+        key = f"{ssid}:{channel if channel is not None else '?'}"
+        h = hashlib.md5(key.encode()).hexdigest()[:12]  # noqa: S324
+        return f"ssid:{h}"
+
     def scan(self) -> list[WifiReading]:
         """Perform a WiFi scan using CoreWLAN.
 
-        Retries automatically on transient errors (e.g. "Resource busy").
+        Retries automatically on transient errors (e.g. "Resource busy")
+        with exponential backoff. When BSSIDs are unavailable (macOS 14.4+
+        without Location Services), falls back to SSID-based identification.
 
         Returns:
             A list of WifiReading objects for detected networks.
@@ -98,12 +122,13 @@ class MacOSScanner(WifiScanner):
                         "Privacy & Security > Location Services."
                     )
                 if self._is_transient_error(error_msg) and attempt < MAX_SCAN_RETRIES - 1:
+                    delay = INITIAL_RETRY_DELAY * (2 ** attempt)
                     logger.warning(
                         f"WiFi scan attempt {attempt + 1}/{MAX_SCAN_RETRIES} failed: "
-                        f"{error_msg}. Retrying in {RETRY_DELAY}s..."
+                        f"{error_msg}. Retrying in {delay}s..."
                     )
                     last_error_msg = error_msg
-                    time.sleep(RETRY_DELAY)
+                    time.sleep(delay)
                     continue
                 raise RuntimeError(f"WiFi scan failed: {error_msg}")
 
@@ -123,13 +148,21 @@ class MacOSScanner(WifiScanner):
         readings: list[WifiReading] = []
         null_bssid_count = 0
         null_ssid_count = 0
+        ssid_fallback_count = 0
         for network in networks:
             bssid = network.bssid()
             ssid = network.ssid()
+            channel = network.wlanChannel().channelNumber() if network.wlanChannel() else None
 
             if bssid is None:
                 null_bssid_count += 1
-                continue
+                # Fall back to SSID-based identification when BSSID is
+                # unavailable (common on macOS 14.4+ without Location Services).
+                if ssid is not None:
+                    bssid = self._ssid_to_synthetic_bssid(ssid, channel)
+                    ssid_fallback_count += 1
+                else:
+                    continue
 
             if ssid is None:
                 null_ssid_count += 1
@@ -139,14 +172,21 @@ class MacOSScanner(WifiScanner):
                     bssid=bssid,
                     ssid=ssid,
                     rssi=network.rssiValue(),
-                    channel=network.wlanChannel().channelNumber() if network.wlanChannel() else None,
+                    channel=channel,
                 )
             )
 
-        if null_bssid_count > 0:
+        if null_bssid_count > 0 and ssid_fallback_count > 0:
+            if not self._ssid_fallback_warned:
+                logger.warning(
+                    f"Used SSID-based identification for {ssid_fallback_count} "
+                    f"network(s) (no BSSID available). Positioning accuracy may "
+                    f"be reduced. Enable Location Services for best results."
+                )
+                self._ssid_fallback_warned = True
+        elif null_bssid_count > 0:
             logger.warning(
-                f"Skipped {null_bssid_count} network(s) with null BSSID. "
-                "This is common on macOS 14.4+ without Location Services."
+                f"Skipped {null_bssid_count} network(s) with null BSSID and no SSID."
             )
         if null_ssid_count > 0:
             logger.debug(
