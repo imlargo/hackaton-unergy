@@ -60,7 +60,8 @@ def collect_fingerprint(
             readings = scanner.scan()
         except RuntimeError as e:
             logger.warning(
-                f"Sample {i + 1}/{num_samples}: Scan error: {e}. Skipping..."
+                f"Sample {i + 1}/{num_samples}: Scan temporarily unavailable, "
+                f"skipping this sample. ({e})"
             )
             if i < num_samples - 1:
                 time.sleep(interval)

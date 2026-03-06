@@ -124,8 +124,9 @@ class MacOSScanner(WifiScanner):
                 if self._is_transient_error(error_msg) and attempt < MAX_SCAN_RETRIES - 1:
                     delay = INITIAL_RETRY_DELAY * (2 ** attempt)
                     logger.warning(
-                        f"WiFi scan attempt {attempt + 1}/{MAX_SCAN_RETRIES} failed: "
-                        f"{error_msg}. Retrying in {delay}s..."
+                        f"WiFi interface temporarily busy (attempt "
+                        f"{attempt + 1}/{MAX_SCAN_RETRIES}). This is normal "
+                        f"when scanning rapidly. Retrying in {delay:.0f}s..."
                     )
                     last_error_msg = error_msg
                     time.sleep(delay)
