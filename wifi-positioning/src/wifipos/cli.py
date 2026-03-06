@@ -102,12 +102,20 @@ def learn(
 
     counts = db.get_fingerprint_count_by_location()
     total_locations = len(counts)
-    console.print(f"  Total locations: {total_locations}, Total fingerprints for '{location}': {counts.get(location, 0)}")
+    total_fp = counts.get(location, 0)
+    console.print(f"  Total locations: {total_locations}, Total fingerprints for '{location}': {total_fp}")
 
+    min_recommended_fingerprints = 30
     if total_locations < 2:
         console.print(
             "\n[yellow]Tip:[/yellow] You need at least 2 locations before training. "
             "Run [bold]wifipos learn <another_location>[/bold] in a different spot."
+        )
+    elif total_fp < min_recommended_fingerprints:
+        console.print(
+            "\n[yellow]Tip:[/yellow] For better accuracy, collect from multiple "
+            "positions within the room. Move to a different spot and run "
+            f"[bold]wifipos learn {location}[/bold] again."
         )
     db.close()
 
@@ -374,6 +382,52 @@ def reset(
     db.reset()
     console.print("[green]✓[/green] All data has been reset.")
     db.close()
+
+
+@app.command()
+def tips() -> None:
+    """Show training tips for best positioning accuracy."""
+    console.print("\n[bold blue]Training Tips for Best Accuracy[/bold blue]\n")
+
+    console.print("[bold]1. Collect from multiple positions within each room[/bold]")
+    console.print(
+        "   WiFi signals vary even inside the same room. Run [bold]wifipos learn[/bold]"
+    )
+    console.print(
+        "   several times from [green]different spots[/green] using the [bold]same location name[/bold]:"
+    )
+    console.print(
+        '   [dim]$ wifipos learn kitchen --samples 10   # center of the room[/dim]'
+    )
+    console.print(
+        '   [dim]$ wifipos learn kitchen --samples 10   # by the window[/dim]'
+    )
+    console.print(
+        '   [dim]$ wifipos learn kitchen --samples 10   # near the door[/dim]'
+    )
+    console.print(
+        "   Each run [green]adds[/green] fingerprints — it does not replace previous data.\n"
+    )
+
+    console.print("[bold]2. Recommended amounts[/bold]")
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Scenario")
+    table.add_column("Samples/position", justify="right")
+    table.add_column("Positions/room", justify="right")
+    table.add_column("Total/room", justify="right")
+    table.add_row("Quick test", "5", "1", "5")
+    table.add_row("Normal use", "10", "3–4", "30–40")
+    table.add_row("Best accuracy", "15–20", "4–5", "60–100")
+    console.print(table)
+    console.print()
+
+    console.print("[bold]3. General tips[/bold]")
+    console.print("   • More data = better accuracy. You can always add more later.")
+    console.print("   • Rooms should be physically separated (walls help).")
+    console.print("   • Run [bold]wifipos train[/bold] after adding new fingerprints.")
+    console.print("   • Use [bold]wifipos locations[/bold] to check fingerprint counts.")
+    console.print("   • Use [bold]wifipos status[/bold] to check model accuracy.")
+    console.print()
 
 
 if __name__ == "__main__":

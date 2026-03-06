@@ -63,10 +63,10 @@ Walk to each room and run:
 
 ```bash
 # Learn your office (collect 10 WiFi samples)
-wifipos learn office --samples 10 --interval 2
+wifipos learn office --samples 10
 
 # Move to the kitchen and learn it
-wifipos learn kitchen --samples 10 --interval 2
+wifipos learn kitchen --samples 10
 
 # Learn as many locations as you want
 wifipos learn bedroom --samples 10
@@ -107,7 +107,62 @@ wifipos export data.csv
 
 # Reset all data
 wifipos reset --confirm
+
+# Show training tips and best practices
+wifipos tips
 ```
+
+## Training Tips for Best Accuracy
+
+The accuracy of WiFi positioning depends heavily on how you collect training
+data. Here are the best practices:
+
+### Collect from multiple positions within each room
+
+WiFi signals vary even within a single room. To improve accuracy, run
+`wifipos learn` **multiple times** from **different spots** in the same room:
+
+```bash
+# Stand in the center of the kitchen
+wifipos learn kitchen --samples 10
+
+# Move to a corner and run again (same location name!)
+wifipos learn kitchen --samples 10
+
+# Move to another spot and run again
+wifipos learn kitchen --samples 10
+
+# Do the same for every room
+wifipos learn office --samples 10   # desk
+wifipos learn office --samples 10   # by the window
+wifipos learn office --samples 10   # near the door
+```
+
+Each run **adds** fingerprints to the same location — it does not replace
+previous data. This teaches the model the range of signal patterns within the
+room.
+
+### Recommended amounts
+
+| Scenario | Samples per position | Positions per room | Total per room |
+|----------|--------------------:|-------------------:|---------------:|
+| Quick test | 5 | 1 | 5 |
+| Normal use | 10 | 3–4 | 30–40 |
+| Best accuracy | 15–20 | 4–5 | 60–100 |
+
+### General tips
+
+- **More data = better accuracy.** You can always add more fingerprints later
+  and retrain.
+- **Rooms should be distinct.** The model needs to tell rooms apart, which
+  works best when they are physically separated (different walls).
+- **Retrain after adding data.** Run `wifipos train` each time you add new
+  fingerprints.
+- **Check your progress.** Use `wifipos locations` to see how many fingerprints
+  you have per room, and `wifipos status` to check model accuracy.
+- **Time of day matters.** WiFi signals can shift slightly at different times.
+  If accuracy drops at night, collect 5–10 extra samples at that time of day
+  and retrain.
 
 ## Supported Platforms
 
@@ -136,8 +191,9 @@ wifipos reset --confirm
 
 ### Low prediction accuracy
 
-- Collect more samples per location (15-20 recommended).
-- Ensure locations are physically distinct (different rooms, not just different spots in the same room).
+- Collect from **multiple positions** within each room (see [Training Tips](#training-tips-for-best-accuracy)).
+- Aim for 30–40 total fingerprints per location.
+- Ensure locations are physically distinct (different rooms, not just different spots in the same open space).
 - Retrain after collecting more data: `wifipos train`
 
 ## Project Structure
