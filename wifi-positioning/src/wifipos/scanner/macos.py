@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from wifipos.scanner.base import WifiReading, WifiScanner
 
 logger = logging.getLogger(__name__)
+
+MAX_SCAN_RETRIES = 3
+RETRY_DELAY = 2.0
 
 
 class MacOSScanner(WifiScanner):
@@ -33,9 +37,15 @@ class MacOSScanner(WifiScanner):
             raise RuntimeError(
                 "No WiFi interface found. Ensure WiFi hardware is available."
             )
+        self._location_services_warned = False
 
     def _check_location_services(self) -> None:
-        """Check and warn about Location Services authorization on macOS 14+."""
+        """Check and warn about Location Services authorization on macOS 14+.
+
+        Only warns once per scanner instance to avoid log spam.
+        """
+        if self._location_services_warned:
+            return
         try:
             import CoreLocation  # type: ignore[import-not-found]
 
@@ -47,56 +57,82 @@ class MacOSScanner(WifiScanner):
                     "requires Location Services. Enable it in System Preferences > "
                     "Privacy & Security > Location Services for your terminal app."
                 )
+                self._location_services_warned = True
         except ImportError:
             logger.debug(
                 "CoreLocation not available. Cannot check Location Services status."
             )
+            self._location_services_warned = True
+
+    @staticmethod
+    def _is_transient_error(error_msg: str) -> bool:
+        """Check if a scan error is transient and worth retrying."""
+        transient_keywords = ["resource busy", "code=16"]
+        lower = error_msg.lower()
+        return any(kw in lower for kw in transient_keywords)
 
     def scan(self) -> list[WifiReading]:
         """Perform a WiFi scan using CoreWLAN.
+
+        Retries automatically on transient errors (e.g. "Resource busy").
 
         Returns:
             A list of WifiReading objects for detected networks.
 
         Raises:
             PermissionError: If Location Services are not authorized.
-            RuntimeError: If the scan fails.
+            RuntimeError: If the scan fails after all retries.
         """
         self._check_location_services()
 
-        networks, error = self._interface.scanForNetworksWithName_error_(None, None)
+        last_error_msg = ""
+        for attempt in range(MAX_SCAN_RETRIES):
+            networks, error = self._interface.scanForNetworksWithName_error_(None, None)
 
-        if error:
-            error_msg = str(error)
-            if "permission" in error_msg.lower() or "authorization" in error_msg.lower():
-                raise PermissionError(
-                    "WiFi scanning permission denied. On macOS 14+, enable Location "
-                    "Services for your terminal app in System Preferences > "
-                    "Privacy & Security > Location Services."
-                )
-            raise RuntimeError(f"WiFi scan failed: {error_msg}")
+            if error:
+                error_msg = str(error)
+                if "permission" in error_msg.lower() or "authorization" in error_msg.lower():
+                    raise PermissionError(
+                        "WiFi scanning permission denied. On macOS 14+, enable Location "
+                        "Services for your terminal app in System Preferences > "
+                        "Privacy & Security > Location Services."
+                    )
+                if self._is_transient_error(error_msg) and attempt < MAX_SCAN_RETRIES - 1:
+                    logger.warning(
+                        f"WiFi scan attempt {attempt + 1}/{MAX_SCAN_RETRIES} failed: "
+                        f"{error_msg}. Retrying in {RETRY_DELAY}s..."
+                    )
+                    last_error_msg = error_msg
+                    time.sleep(RETRY_DELAY)
+                    continue
+                raise RuntimeError(f"WiFi scan failed: {error_msg}")
+
+            break
+        else:
+            # All retry attempts exhausted with transient errors;
+            # last_error_msg is guaranteed set since we only reach here
+            # after at least one transient error triggered a continue.
+            raise RuntimeError(
+                f"WiFi scan failed after {MAX_SCAN_RETRIES} attempts: {last_error_msg}"
+            )
 
         if not networks:
             logger.warning("No networks found during scan.")
             return []
 
         readings: list[WifiReading] = []
+        null_bssid_count = 0
+        null_ssid_count = 0
         for network in networks:
             bssid = network.bssid()
             ssid = network.ssid()
 
             if bssid is None:
-                logger.warning(
-                    "BSSID returned None for a network. This is common on macOS 14.4+ "
-                    "without Location Services. Skipping this network."
-                )
+                null_bssid_count += 1
                 continue
 
             if ssid is None:
-                logger.warning(
-                    f"SSID returned None for BSSID {bssid}. This may indicate "
-                    "Location Services is not fully authorized."
-                )
+                null_ssid_count += 1
 
             readings.append(
                 WifiReading(
@@ -105,6 +141,17 @@ class MacOSScanner(WifiScanner):
                     rssi=network.rssiValue(),
                     channel=network.wlanChannel().channelNumber() if network.wlanChannel() else None,
                 )
+            )
+
+        if null_bssid_count > 0:
+            logger.warning(
+                f"Skipped {null_bssid_count} network(s) with null BSSID. "
+                "This is common on macOS 14.4+ without Location Services."
+            )
+        if null_ssid_count > 0:
+            logger.debug(
+                f"{null_ssid_count} network(s) returned null SSID. "
+                "This may indicate Location Services is not fully authorized."
             )
 
         logger.info(f"macOS scan found {len(readings)} networks.")

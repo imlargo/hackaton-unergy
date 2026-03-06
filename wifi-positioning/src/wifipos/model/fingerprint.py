@@ -56,7 +56,15 @@ def collect_fingerprint(
     fingerprints: list[Fingerprint] = []
 
     for i in range(num_samples):
-        readings = scanner.scan()
+        try:
+            readings = scanner.scan()
+        except RuntimeError as e:
+            logger.warning(
+                f"Sample {i + 1}/{num_samples}: Scan error: {e}. Skipping..."
+            )
+            if i < num_samples - 1:
+                time.sleep(interval)
+            continue
 
         if not readings:
             logger.warning(f"Sample {i + 1}/{num_samples}: No networks found. Retrying...")

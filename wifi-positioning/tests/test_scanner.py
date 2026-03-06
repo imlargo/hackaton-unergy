@@ -208,6 +208,86 @@ wlan0     Scan completed :
         assert readings[0].channel == 6
 
 
+class TestMacOSScannerTransientErrors:
+    """Tests for macOS scanner transient error detection."""
+
+    def test_resource_busy_is_transient(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        assert MacOSScanner._is_transient_error(
+            'Error Domain=NSPOSIXErrorDomain Code=16 "Resource busy"'
+        )
+
+    def test_resource_busy_case_insensitive(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        assert MacOSScanner._is_transient_error("RESOURCE BUSY")
+
+    def test_permission_error_is_not_transient(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        assert not MacOSScanner._is_transient_error("Permission denied")
+
+    def test_unknown_error_is_not_transient(self) -> None:
+        from wifipos.scanner.macos import MacOSScanner
+
+        assert not MacOSScanner._is_transient_error("Something went wrong")
+
+
+class TestCollectFingerprintErrorHandling:
+    """Tests for collect_fingerprint handling RuntimeError from scanner."""
+
+    def test_runtime_error_is_caught_and_skipped(self) -> None:
+        """Scanner RuntimeError should be caught, not crash the collection."""
+        from wifipos.model.fingerprint import collect_fingerprint
+
+        class FailingScanner(WifiScanner):
+            def scan(self) -> list[WifiReading]:
+                raise RuntimeError("WiFi scan failed: Resource busy")
+
+        fingerprints = collect_fingerprint(
+            FailingScanner(), "test", num_samples=3, interval=0
+        )
+        assert len(fingerprints) == 0
+
+    def test_partial_failure_collects_successful_samples(self) -> None:
+        """Some scan failures should not prevent successful samples."""
+        from wifipos.model.fingerprint import collect_fingerprint
+
+        class PartialFailScanner(WifiScanner):
+            def __init__(self) -> None:
+                self._call_count = 0
+
+            def scan(self) -> list[WifiReading]:
+                self._call_count += 1
+                if self._call_count % 2 == 0:
+                    raise RuntimeError("Resource busy")
+                return [
+                    WifiReading(
+                        bssid="AA:BB:CC:DD:EE:01", ssid="Test", rssi=-50, channel=6
+                    )
+                ]
+
+        fingerprints = collect_fingerprint(
+            PartialFailScanner(), "test", num_samples=4, interval=0
+        )
+        # Calls 1,3 succeed (odd), calls 2,4 fail (even)
+        assert len(fingerprints) == 2
+
+    def test_permission_error_still_propagates(self) -> None:
+        """PermissionError should NOT be caught (not a RuntimeError)."""
+        from wifipos.model.fingerprint import collect_fingerprint
+
+        class PermissionScanner(WifiScanner):
+            def scan(self) -> list[WifiReading]:
+                raise PermissionError("WiFi scanning permission denied.")
+
+        with pytest.raises(PermissionError):
+            collect_fingerprint(
+                PermissionScanner(), "test", num_samples=2, interval=0
+            )
+
+
 class TestWindowsScannerParsing:
     """Tests for Windows scanner netsh output parsing."""
 
