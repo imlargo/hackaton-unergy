@@ -30,6 +30,8 @@
 	let trackingActive = $state(false);
 	let trackingStarting = $state(false);
 	let trackingStopping = $state(false);
+	let predicting = $state(false);
+	let locationUpdating = $state(false);
 	let currentLocation: LocationPrediction | null = $state(null);
 	let locationHistory: LocationPrediction[] = $state([]);
 	let pollInterval: ReturnType<typeof setInterval> | null = $state(null);
@@ -44,6 +46,7 @@
 
 	const TRACKING_POLL_MS = 3000;
 	const COLLECTION_POLL_MS = 3000;
+	const LOCATION_UPDATE_FLASH_MS = 500;
 
 	// Form state
 	let newName = $state('');
@@ -167,6 +170,8 @@
 	}
 
 	async function singlePredict() {
+		predicting = true;
+		currentLocation = null;
 		try {
 			const prediction = await trackingService.predictOnce();
 			currentLocation = prediction;
@@ -176,6 +181,8 @@
 		} catch (err) {
 			console.error('Error predicting location:', err);
 			toast.error('Error al predecir ubicación');
+		} finally {
+			predicting = false;
 		}
 	}
 
@@ -192,10 +199,12 @@
 				const isNew = !currentLocation ||
 					newPrediction.timestamp !== currentLocation.timestamp;
 				if (isNew) {
+					locationUpdating = true;
 					currentLocation = newPrediction;
 					lastUpdated = newPrediction.timestamp ?? new Date().toISOString();
 					predictionCount++;
 					addToHistory(newPrediction);
+					setTimeout(() => { locationUpdating = false; }, LOCATION_UPDATE_FLASH_MS);
 				}
 			}
 		} catch (err) {
@@ -445,6 +454,21 @@
 
 	<!-- ═══════════════════ Stats Row ═══════════════════ -->
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+		{#if loading}
+			{#each [1, 2, 3, 4] as _}
+				<Card.Root class="group relative overflow-hidden">
+					<Card.Header class="pb-2">
+						<div class="flex items-center gap-2">
+							<div class="size-8 animate-pulse rounded-lg bg-muted"></div>
+							<div class="h-4 w-24 animate-pulse rounded-md bg-muted"></div>
+						</div>
+					</Card.Header>
+					<Card.Content>
+						<div class="h-7 w-20 animate-pulse rounded-md bg-muted"></div>
+					</Card.Content>
+				</Card.Root>
+			{/each}
+		{:else}
 		<Card.Root class="group relative overflow-hidden transition-shadow hover:shadow-md">
 			<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent"></div>
 			<Card.Header class="pb-2">
@@ -524,8 +548,8 @@
 				{/if}
 			</Card.Content>
 		</Card.Root>
+		{/if}
 	</div>
-
 	<!-- ═══════════════════ Live Tracking ═══════════════════ -->
 	<div class="space-y-4">
 		<div class="flex items-center gap-2.5">
@@ -542,6 +566,26 @@
 			{/if}
 		</div>
 
+		{#if loading}
+			<Card.Root>
+				<Card.Content class="p-6">
+					<div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+						<div class="flex flex-1 items-center gap-4">
+							<div class="size-16 animate-pulse rounded-2xl bg-muted"></div>
+							<div class="space-y-2">
+								<div class="h-4 w-24 animate-pulse rounded-md bg-muted"></div>
+								<div class="h-8 w-48 animate-pulse rounded-lg bg-muted"></div>
+								<div class="h-4 w-36 animate-pulse rounded-md bg-muted"></div>
+							</div>
+						</div>
+						<div class="flex flex-col items-center gap-3 lg:items-end">
+							<div class="h-10 w-40 animate-pulse rounded-lg bg-muted"></div>
+							<div class="h-8 w-32 animate-pulse rounded-md bg-muted"></div>
+						</div>
+					</div>
+				</Card.Content>
+			</Card.Root>
+		{:else}
 		<Card.Root class={`relative overflow-hidden transition-all duration-300 ${trackingActive ? 'border-emerald-500/30 shadow-lg shadow-emerald-500/5' : ''}`}>
 			{#if trackingActive}
 				<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent"></div>
@@ -551,8 +595,10 @@
 					<!-- Current Location Display -->
 					<div class="flex-1 space-y-5">
 						<div class="flex items-center gap-4">
-							<div class={`flex size-16 items-center justify-center rounded-2xl transition-colors duration-300 ${trackingActive ? 'bg-emerald-500/10' : 'bg-muted'}`}>
-								{#if currentLocation && currentLocation.location !== 'unknown'}
+							<div class={`flex size-16 items-center justify-center rounded-2xl transition-colors duration-300 ${trackingActive ? 'bg-emerald-500/10' : predicting ? 'bg-primary/10' : 'bg-muted'}`}>
+								{#if predicting}
+									<Loader2 class="size-8 animate-spin text-primary" />
+								{:else if currentLocation && currentLocation.location !== 'unknown'}
 									{@const LocIcon = getSpaceIcon(
 										spaces.find(s => s.name === currentLocation?.location)?.space_type ?? ''
 									)}
@@ -561,46 +607,53 @@
 									<Target class={`size-8 ${trackingActive ? 'text-emerald-500 animate-pulse' : 'text-muted-foreground'}`} />
 								{/if}
 							</div>
-							<div>
+							<div class="min-w-0 flex-1">
 								<p class="text-sm text-muted-foreground">
-									{trackingActive ? 'Estás en' : 'Última ubicación'}
+									{predicting ? 'Detectando ubicación…' : trackingActive ? 'Estás en' : 'Última ubicación'}
 								</p>
-								<p class="text-3xl font-bold tracking-tight">
-									{#if currentLocation && currentLocation.location !== 'unknown'}
-										{currentLocation.location}
-									{:else if trackingActive}
-										Detectando…
-									{:else}
-										—
-									{/if}
-								</p>
-								{#if currentLocation && currentLocation.location !== 'unknown'}
-									<div class="mt-1 flex items-center gap-2">
-										<span class={`text-sm font-medium ${getConfidenceColor(currentLocation.confidence)}`}>
-											{formatConfidence(currentLocation.confidence)} confianza
-										</span>
-										{#if lastUpdated}
-											<span class="text-xs text-muted-foreground">
-												· {formatTime(lastUpdated)}
-											</span>
-										{/if}
+								{#if predicting}
+									<div class="mt-1 space-y-2">
+										<div class="h-8 w-48 animate-pulse rounded-lg bg-primary/10"></div>
+										<div class="h-4 w-32 animate-pulse rounded-md bg-muted"></div>
 									</div>
-								{:else if !modelReady && spaces.length >= 2}
-									<p class="mt-1 text-sm text-amber-600">
-										⏳ El modelo se está entrenando con los datos recolectados…
+								{:else}
+									<p class={`text-3xl font-bold tracking-tight transition-all duration-500 ${locationUpdating ? 'scale-105 text-primary' : ''}`}>
+										{#if currentLocation && currentLocation.location !== 'unknown'}
+											{currentLocation.location}
+										{:else if trackingActive}
+											Detectando…
+										{:else}
+											—
+										{/if}
 									</p>
-								{:else if !modelReady && spaces.length === 1}
-									<p class="mt-1 text-sm text-muted-foreground">
-										Registra al menos 2 espacios diferentes para activar la detección
-									</p>
-								{:else if !modelReady && spaces.length === 0}
-									<p class="mt-1 text-sm text-muted-foreground">
-										Registra espacios en diferentes habitaciones para comenzar
-									</p>
-								{:else if currentLocation?.location === 'unknown' && modelReady}
-									<p class="mt-1 text-sm text-amber-600">
-										No se pudo determinar la ubicación — intenta moverte
-									</p>
+									{#if currentLocation && currentLocation.location !== 'unknown'}
+										<div class="mt-1 flex items-center gap-2">
+											<span class={`text-sm font-medium ${getConfidenceColor(currentLocation.confidence)}`}>
+												{formatConfidence(currentLocation.confidence)} confianza
+											</span>
+											{#if lastUpdated}
+												<span class="text-xs text-muted-foreground">
+													· {formatTime(lastUpdated)}
+												</span>
+											{/if}
+										</div>
+									{:else if !modelReady && spaces.length >= 2}
+										<p class="mt-1 text-sm text-amber-600">
+											⏳ El modelo se está entrenando con los datos recolectados…
+										</p>
+									{:else if !modelReady && spaces.length === 1}
+										<p class="mt-1 text-sm text-muted-foreground">
+											Registra al menos 2 espacios diferentes para activar la detección
+										</p>
+									{:else if !modelReady && spaces.length === 0}
+										<p class="mt-1 text-sm text-muted-foreground">
+											Registra espacios en diferentes habitaciones para comenzar
+										</p>
+									{:else if currentLocation?.location === 'unknown' && modelReady}
+										<p class="mt-1 text-sm text-amber-600">
+											No se pudo determinar la ubicación — intenta moverte
+										</p>
+									{/if}
 								{/if}
 							</div>
 						</div>
@@ -680,9 +733,15 @@
 							size="sm"
 							class="gap-2"
 							onclick={singlePredict}
+							disabled={predicting}
 						>
-							<Eye class="size-4" />
-							Detectar ahora
+							{#if predicting}
+								<Loader2 class="size-4 animate-spin" />
+								Detectando…
+							{:else}
+								<Eye class="size-4" />
+								Detectar ahora
+							{/if}
 						</Button>
 
 						<!-- Interval selector -->
@@ -734,6 +793,7 @@
 				</div>
 			</Card.Content>
 		</Card.Root>
+		{/if}
 
 		<!-- Location History Timeline -->
 		{#if locationHistory.length > 0}
