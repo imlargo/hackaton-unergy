@@ -250,3 +250,173 @@ class TestSpaces:
             json={"name": "Test", "space_type": "room"},
         )
         assert resp.status_code == 200
+
+
+# ── Model export / import ────────────────────────────────────────────
+
+
+class TestModelExportImport:
+    """Verify model bundle export and import round-trip."""
+
+    def test_export_returns_bundle(self, client):
+        """GET /model/export should return a JSON bundle."""
+        resp = client.get("/model/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "version" in data
+        assert "fingerprints" in data
+        assert "exported_at" in data
+
+    def test_import_rejects_invalid_json(self, client):
+        """POST /model/import should reject a non-JSON file."""
+        resp = client.post(
+            "/model/import",
+            files={"file": ("bad.wifipos", b"NOT JSON", "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "error" in resp.json()
+
+    def test_export_import_round_trip(self, client):
+        """Export a bundle then import it — fingerprint count should match."""
+        # Register a space so there's at least 1 fingerprint
+        client.post("/spaces", json={"name": "RT_Cocina", "space_type": "kitchen"})
+
+        # Export
+        export_resp = client.get("/model/export")
+        assert export_resp.status_code == 200
+        bundle = export_resp.json()
+        fp_count = len(bundle["fingerprints"])
+        assert fp_count >= 1
+
+        # Import
+        import json as _json
+
+        bundle_bytes = _json.dumps(bundle).encode()
+        import_resp = client.post(
+            "/model/import",
+            files={"file": ("data.wifipos", bundle_bytes, "application/json")},
+        )
+        assert import_resp.status_code == 200
+        result = import_resp.json()
+        assert result["fingerprints_imported"] == fp_count
+
+
+# ── Consumption ──────────────────────────────────────────────────────
+
+
+class TestConsumption:
+    """Energy consumption tracking endpoints."""
+
+    def test_device_catalog(self, client):
+        """GET /consumption/catalog returns available device types."""
+        resp = client.get("/consumption/catalog")
+        assert resp.status_code == 200
+        catalog = resp.json()["devices"]
+        assert "tv" in catalog
+        assert "lamp" in catalog
+        assert catalog["tv"]["watts"] > 0
+
+    def test_register_device(self, client):
+        """POST /consumption/devices registers a device to a space."""
+        resp = client.post(
+            "/consumption/devices",
+            json={"space_name": "Cocina", "name": "TV Cocina", "device_type": "tv"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "TV Cocina"
+        assert body["space_name"] == "Cocina"
+        assert body["is_on"] is False
+        assert body["watts"] == 100
+        assert "id" in body
+
+    def test_register_device_unknown_type(self, client):
+        """POST /consumption/devices rejects unknown device types."""
+        resp = client.post(
+            "/consumption/devices",
+            json={"space_name": "Sala", "name": "Alien", "device_type": "alien"},
+        )
+        assert resp.status_code == 400
+
+    def test_list_devices(self, client):
+        """GET /consumption/devices lists registered devices."""
+        client.post(
+            "/consumption/devices",
+            json={"space_name": "TestList", "name": "Fan1", "device_type": "fan"},
+        )
+        resp = client.get("/consumption/devices")
+        assert resp.status_code == 200
+        assert len(resp.json()["devices"]) >= 1
+
+    def test_list_devices_filter_by_space(self, client):
+        """GET /consumption/devices?space_name=X filters by space."""
+        client.post(
+            "/consumption/devices",
+            json={"space_name": "FilterSpace", "name": "Lamp1", "device_type": "lamp"},
+        )
+        resp = client.get("/consumption/devices?space_name=FilterSpace")
+        assert resp.status_code == 200
+        devices = resp.json()["devices"]
+        assert all(d["space_name"] == "FilterSpace" for d in devices)
+
+    def test_toggle_device_on_off(self, client):
+        """POST /consumption/event toggles device and records consumption."""
+        # Register
+        reg = client.post(
+            "/consumption/devices",
+            json={"space_name": "Toggle", "name": "TV Toggle", "device_type": "tv"},
+        )
+        device_id = reg.json()["id"]
+
+        # Turn ON
+        on_resp = client.post(
+            "/consumption/event",
+            json={"device_id": device_id, "action": "on"},
+        )
+        assert on_resp.status_code == 200
+        assert on_resp.json()["action"] == "on"
+
+        # Turn OFF
+        off_resp = client.post(
+            "/consumption/event",
+            json={"device_id": device_id, "action": "off"},
+        )
+        assert off_resp.status_code == 200
+        body = off_resp.json()
+        assert body["action"] == "off"
+        assert "kwh_consumed" in body
+        assert "co2_kg" in body
+
+    def test_event_nonexistent_device(self, client):
+        """POST /consumption/event 404s for unknown device."""
+        resp = client.post(
+            "/consumption/event",
+            json={"device_id": 99999, "action": "on"},
+        )
+        assert resp.status_code == 404
+
+    def test_consumption_summary(self, client):
+        """GET /consumption/summary returns totals + carbon footprint."""
+        resp = client.get("/consumption/summary")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "total_kwh" in body
+        assert "total_co2_kg" in body
+        assert "active_watts" in body
+        assert "devices" in body
+        assert "by_space" in body
+
+    def test_events_list(self, client):
+        """GET /consumption/events returns event log."""
+        resp = client.get("/consumption/events")
+        assert resp.status_code == 200
+        assert "events" in resp.json()
+
+    def test_active_devices(self, client):
+        """GET /consumption/active returns currently on devices."""
+        resp = client.get("/consumption/active")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "active_count" in body
+        assert "total_watts" in body
+        assert "devices" in body

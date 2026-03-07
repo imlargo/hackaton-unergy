@@ -1,5 +1,6 @@
 """Tests for persistent SpaceRepository and native WiFi scanning."""
 
+import argparse
 import json
 import tempfile
 from pathlib import Path
@@ -283,6 +284,39 @@ class TestWalkModeCollection:
         # save_fingerprint returns False when db is None, but loop still runs
         assert result["samples_requested"] == 3
 
+    def test_progress_callback_fires_for_each_sample(self):
+        """progress_callback should fire after each fingerprint is saved."""
+        service = self._make_service()
+        progress_log: list[tuple[int, int]] = []
+
+        def on_progress(saved: int, total: int) -> None:
+            progress_log.append((saved, total))
+
+        result = service.collect_and_save_fingerprints(
+            "Cocina", num_samples=5, progress_callback=on_progress,
+        )
+
+        assert result["fingerprints_saved"] == 5
+        # Callback should fire exactly once per saved fingerprint
+        assert len(progress_log) == 5
+        # Each call should report incrementing saved count
+        assert [s for s, _ in progress_log] == [1, 2, 3, 4, 5]
+        # total should always equal num_samples
+        assert all(t == 5 for _, t in progress_log)
+
+    def test_progress_callback_error_does_not_abort(self):
+        """A failing callback must not stop collection."""
+        service = self._make_service()
+
+        def bad_callback(saved: int, total: int) -> None:
+            raise RuntimeError("boom")
+
+        result = service.collect_and_save_fingerprints(
+            "Sala", num_samples=3, progress_callback=bad_callback,
+        )
+        # Collection should still complete despite callback errors
+        assert result["fingerprints_saved"] == 3
+
 
 # ── Tracking ─────────────────────────────────────────────────────────
 
@@ -507,3 +541,159 @@ class TestBackgroundCollectionAPI:
         resp = client.get("/spaces/collection-status/NonExistent")
         assert resp.status_code == 200
         assert resp.json()["status"] == "unknown"
+
+    def test_collection_status_shows_done_after_background(self, client):
+        """After background collection completes, status should be 'done' with correct count."""
+        from app.api.routes.spaces import get_space_service
+
+        # Register a space (sets initial status to "collecting")
+        client.post(
+            "/spaces",
+            json={"name": "ProgressTest", "space_type": "room", "samples": 5},
+        )
+
+        # Run the background collection synchronously (mock data = instant)
+        svc = get_space_service()
+        svc.run_background_collection("ProgressTest", num_samples=5)
+
+        # Now poll status — should be "done" with all samples saved
+        resp = client.get("/spaces/collection-status/ProgressTest")
+        body = resp.json()
+        assert body["status"] == "done"
+        assert body["fingerprints_saved"] == 5
+        assert body["samples_requested"] == 5
+
+
+# ── Save Model Script ────────────────────────────────────────────────
+
+
+class TestSaveModelScript:
+    """Verify the save_model.py CLI functions work correctly."""
+
+    def _make_db(self, tmp_path):
+        """Create a temp wifipos DB with sample data."""
+        from wifipos.storage.database import Database
+
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        # Add some fingerprints
+        db.save_fingerprint("Cocina", [{"bssid": "AA:BB:CC", "rssi": -45}])
+        db.save_fingerprint("Cocina", [{"bssid": "AA:BB:CC", "rssi": -42}])
+        db.save_fingerprint("Sala", [{"bssid": "AA:BB:CC", "rssi": -60}])
+        return db, db_path
+
+    def test_save_creates_file(self, tmp_path):
+        """cmd_save should create a .wifipos JSON file."""
+        import save_model
+
+        db, db_path = self._make_db(tmp_path)
+        db.close()
+
+        # Patch paths
+        backup_dir = tmp_path / "backups"
+        with patch.object(save_model, "_DEFAULT_DB_PATH", db_path), \
+             patch.object(save_model, "_BACKUPS_DIR", backup_dir):
+            args = argparse.Namespace(output=None)
+            save_model.cmd_save(args)
+
+        files = list(backup_dir.glob("*.wifipos"))
+        assert len(files) == 1
+
+        bundle = json.loads(files[0].read_text())
+        assert bundle["version"] == 1
+        assert len(bundle["fingerprints"]) == 3
+
+    def test_save_custom_name(self, tmp_path):
+        """cmd_save with --output creates named file."""
+        import save_model
+
+        db, db_path = self._make_db(tmp_path)
+        db.close()
+
+        backup_dir = tmp_path / "backups"
+        with patch.object(save_model, "_DEFAULT_DB_PATH", db_path), \
+             patch.object(save_model, "_BACKUPS_DIR", backup_dir):
+            args = argparse.Namespace(output="mi_casa")
+            save_model.cmd_save(args)
+
+        assert (backup_dir / "mi_casa.wifipos").exists()
+
+    def test_load_restores_data(self, tmp_path):
+        """cmd_load should restore fingerprints from a bundle file."""
+        import save_model
+        from wifipos.storage.database import Database
+
+        # Create bundle file
+        bundle = {
+            "version": 1,
+            "exported_at": "2026-01-01T00:00:00",
+            "fingerprints": [
+                {"location": "Oficina", "timestamp": "2026-01-01T00:00:00",
+                 "raw_data": [{"bssid": "11:22:33", "rssi": -50}]},
+                {"location": "Oficina", "timestamp": "2026-01-01T00:01:00",
+                 "raw_data": [{"bssid": "11:22:33", "rssi": -48}]},
+            ],
+            "model_blob_b64": None,
+            "model_metadata": None,
+        }
+        bundle_file = tmp_path / "test.wifipos"
+        bundle_file.write_text(json.dumps(bundle))
+
+        # Fresh DB
+        db_path = tmp_path / "restore.db"
+        Database(str(db_path)).close()  # create empty
+
+        with patch.object(save_model, "_DEFAULT_DB_PATH", db_path), \
+             patch.object(save_model, "_BACKUPS_DIR", tmp_path):
+            args = argparse.Namespace(file=str(bundle_file), yes=True)
+            save_model.cmd_load(args)
+
+        # Verify
+        db = Database(str(db_path))
+        assert len(db.get_all_fingerprints()) == 2
+        assert "Oficina" in db.get_locations()
+        db.close()
+
+    def test_info_runs(self, tmp_path, capsys):
+        """cmd_info should print DB status without errors."""
+        import save_model
+
+        db, db_path = self._make_db(tmp_path)
+        db.close()
+
+        with patch.object(save_model, "_DEFAULT_DB_PATH", db_path):
+            args = argparse.Namespace()
+            save_model.cmd_info(args)
+
+        output = capsys.readouterr().out
+        assert "Cocina" in output
+        assert "Sala" in output
+
+    def test_list_empty(self, tmp_path, capsys):
+        """cmd_list with no backups should show helpful message."""
+        import save_model
+
+        empty_dir = tmp_path / "empty_backups"
+        with patch.object(save_model, "_BACKUPS_DIR", empty_dir):
+            args = argparse.Namespace()
+            save_model.cmd_list(args)
+
+        output = capsys.readouterr().out
+        assert "No hay backups" in output
+
+    def test_list_shows_files(self, tmp_path, capsys):
+        """cmd_list should show saved backup files."""
+        import save_model
+
+        # Create a backup file
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        bundle = {"version": 1, "fingerprints": [{"location": "X", "timestamp": "2026-01-01", "raw_data": []}], "model_blob_b64": None}
+        (backup_dir / "test.wifipos").write_text(json.dumps(bundle))
+
+        with patch.object(save_model, "_BACKUPS_DIR", backup_dir):
+            args = argparse.Namespace()
+            save_model.cmd_list(args)
+
+        output = capsys.readouterr().out
+        assert "test.wifipos" in output

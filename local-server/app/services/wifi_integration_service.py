@@ -18,6 +18,8 @@ tested.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import re
@@ -27,7 +29,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +509,7 @@ class WiFiIntegrationService:
         location: str,
         num_samples: int = 20,
         interval: float = 2.0,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
         """Collect multiple WiFi fingerprints with walk/movement mode.
 
@@ -518,11 +521,24 @@ class WiFiIntegrationService:
             location: The space/location name (e.g. "Cocina").
             num_samples: Number of scans to collect.
             interval: Seconds between scans.
+            progress_callback: Optional callable(saved_count, num_samples)
+                invoked after each fingerprint is saved so callers can
+                report real-time progress.
 
         Returns:
             A dict with collection results.
         """
         saved_count = 0
+
+        def _report_progress() -> None:
+            if progress_callback is not None:
+                try:
+                    progress_callback(saved_count, num_samples)
+                except Exception:
+                    logger.debug(
+                        "Progress callback error (collection continues): %s",
+                        location, exc_info=True,
+                    )
 
         if self._scanner is not None and _WIFIPOS_AVAILABLE and self._db is not None:
             # Use the real wifipos collect_fingerprint
@@ -542,6 +558,7 @@ class WiFiIntegrationService:
                 raw_data = [r.to_dict() for r in fp.readings]
                 self._db.save_fingerprint(location, raw_data, fp.timestamp)
                 saved_count += 1
+                _report_progress()
                 if i % 5 == 0 or i == num_samples:
                     logger.info(
                         "  ▸ [walk] '%s' sample %d/%d saved (%d networks).",
@@ -555,6 +572,7 @@ class WiFiIntegrationService:
             is_mock = first_scan.get("source") == "mock"
             self.save_fingerprint(location, first_scan)
             saved_count += 1
+            _report_progress()
             logger.info(
                 "  ▸ [walk] '%s' sample 1/%d saved (source=%s).",
                 location, num_samples, first_scan.get("source", "unknown"),
@@ -565,6 +583,7 @@ class WiFiIntegrationService:
                 scan = self.scan_current_environment()
                 self.save_fingerprint(location, scan)
                 saved_count += 1
+                _report_progress()
                 if (i + 1) % 5 == 0 or i + 1 == num_samples:
                     logger.info(
                         "  ▸ [walk] '%s' sample %d/%d saved.",
@@ -646,6 +665,93 @@ class WiFiIntegrationService:
                 self._latest_prediction = prediction
             time.sleep(interval)
         logger.info("Tracking loop ended.")
+
+    # ------------------------------------------------------------------
+    # Export / Import  (model + fingerprints sharing between devices)
+    # ------------------------------------------------------------------
+
+    def export_bundle(self) -> dict[str, Any] | None:
+        """Export all fingerprints and the latest trained model as a JSON-serialisable dict.
+
+        The bundle can be downloaded, transferred to another machine and
+        imported via ``import_bundle()`` so two PCs share the same trained
+        model without needing the same WiFi hardware during training.
+
+        Returns:
+            A dict with keys ``fingerprints``, ``model`` (base64-encoded blob),
+            ``model_metadata``, ``exported_at``.  Returns *None* when the DB
+            is not available.
+        """
+        if self._db is None:
+            return None
+
+        try:
+            fingerprints = self._db.get_all_fingerprints()
+
+            model_row = self._db.load_latest_model()
+            model_b64: str | None = None
+            model_meta: dict | None = None
+            if model_row is not None:
+                model_b64 = base64.b64encode(model_row["model_blob"]).decode("ascii")
+                model_meta = model_row["metadata"]
+
+            return {
+                "version": 1,
+                "exported_at": datetime.now().isoformat(),
+                "fingerprints": fingerprints,
+                "model_blob_b64": model_b64,
+                "model_metadata": model_meta,
+            }
+        except Exception as exc:
+            logger.error("Failed to export bundle: %s", exc)
+            return None
+
+    def import_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Import a previously exported bundle (fingerprints + model).
+
+        This **replaces** any existing data so the device uses the shared
+        model.  Designed for the proof-of-concept cross-PC scenario.
+
+        Args:
+            bundle: The dict produced by ``export_bundle()``.
+
+        Returns:
+            A summary dict: fingerprints_imported, model_imported, etc.
+        """
+        if self._db is None:
+            return {"error": "wifipos database not available"}
+
+        try:
+            # 1. Wipe current data
+            self._db.reset()
+
+            # 2. Restore fingerprints
+            fp_count = 0
+            for fp in bundle.get("fingerprints", []):
+                ts = datetime.fromisoformat(fp["timestamp"]) if fp.get("timestamp") else datetime.now()
+                self._db.save_fingerprint(fp["location"], fp["raw_data"], ts)
+                fp_count += 1
+
+            # 3. Restore model (if present)
+            model_imported = False
+            if bundle.get("model_blob_b64"):
+                model_bytes = base64.b64decode(bundle["model_blob_b64"])
+                meta = bundle.get("model_metadata", {})
+                self._db.save_model(model_bytes, meta)
+                model_imported = True
+
+            logger.info(
+                "Imported bundle: %d fingerprints, model=%s",
+                fp_count,
+                model_imported,
+            )
+            return {
+                "fingerprints_imported": fp_count,
+                "model_imported": model_imported,
+            }
+        except Exception as exc:
+            logger.error("Failed to import bundle: %s", exc)
+            return {"error": str(exc)}
 
     # ------------------------------------------------------------------
     # Reset
