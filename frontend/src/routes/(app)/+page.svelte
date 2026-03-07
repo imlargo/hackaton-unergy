@@ -42,6 +42,10 @@
 	let collectingSpaces: Set<string> = $state(new Set());
 	let collectionPollInterval: ReturnType<typeof setInterval> | null = $state(null);
 
+	// Polling interval matches the user-selected tracking interval
+	const TRACKING_POLL_MS = 3000;
+	const COLLECTION_POLL_MS = 3000;
+
 	// Form state
 	let newName = $state('');
 	let newType = $state('room');
@@ -212,7 +216,7 @@
 
 	function startPolling() {
 		stopPolling();
-		pollInterval = setInterval(pollTrackingStatus, 2000);
+		pollInterval = setInterval(pollTrackingStatus, TRACKING_POLL_MS);
 	}
 
 	function stopPolling() {
@@ -266,7 +270,7 @@
 
 	function startCollectionPolling() {
 		if (collectionPollInterval) return;
-		collectionPollInterval = setInterval(pollCollectionStatus, 3000);
+		collectionPollInterval = setInterval(pollCollectionStatus, COLLECTION_POLL_MS);
 	}
 
 	function stopCollectionPolling() {
@@ -276,6 +280,11 @@
 		}
 	}
 
+	function formatAccuracy(accuracy: number | null | undefined): string {
+		if (accuracy == null) return 'OK';
+		return `${Math.round(accuracy * 100)}%`;
+	}
+
 	async function pollCollectionStatus() {
 		const names = [...collectingSpaces];
 		if (names.length === 0) {
@@ -283,12 +292,13 @@
 			return;
 		}
 
+		let changed = false;
 		for (const name of names) {
 			try {
 				const cs = await trackingService.collectionStatus(name);
 				if (cs.status === 'done') {
 					collectingSpaces.delete(name);
-					collectingSpaces = new Set(collectingSpaces);
+					changed = true;
 
 					// Update space in list
 					const updatedSpace = spaces.find(s => s.name === name);
@@ -307,7 +317,7 @@
 					if (cs.model_trained) {
 						modelReady = true;
 						toast.success(
-							`🎯 Modelo entrenado — precisión ${cs.model_accuracy ? Math.round(cs.model_accuracy * 100) + '%' : 'OK'}. ¡Ya puedes hacer tracking!`
+							`🎯 Modelo entrenado — precisión ${formatAccuracy(cs.model_accuracy)}. ¡Ya puedes hacer tracking!`
 						);
 					} else {
 						toast.success(
@@ -316,7 +326,7 @@
 					}
 				} else if (cs.status === 'error') {
 					collectingSpaces.delete(name);
-					collectingSpaces = new Set(collectingSpaces);
+					changed = true;
 
 					const updatedSpace = spaces.find(s => s.name === name);
 					if (updatedSpace?.registration_feedback) {
@@ -330,6 +340,9 @@
 			}
 		}
 
+		if (changed) {
+			collectingSpaces = new Set(collectingSpaces);
+		}
 		if (collectingSpaces.size === 0) {
 			stopCollectionPolling();
 		}
@@ -826,7 +839,7 @@
 										{:else if space.registration_feedback.collection_status === 'error'}
 											<span>⚠️ Error en recolección</span>
 										{:else if space.registration_feedback.model_trained}
-											<span>✅ {space.registration_feedback.fingerprints_saved} muestras · Modelo entrenado{space.registration_feedback.model_accuracy ? ` (${Math.round(space.registration_feedback.model_accuracy * 100)}%)` : ''}</span>
+											<span>✅ {space.registration_feedback.fingerprints_saved} muestras · Modelo entrenado ({formatAccuracy(space.registration_feedback.model_accuracy)})</span>
 										{:else}
 											<span>📡 {space.registration_feedback.fingerprints_saved} muestras recolectadas</span>
 										{/if}
