@@ -528,16 +528,24 @@ class WiFiIntegrationService:
             # Use the real wifipos collect_fingerprint
             from wifipos.model.fingerprint import collect_fingerprint
 
+            logger.info(
+                "  ▸ [walk] Using wifipos scanner for '%s' (%d samples, %.1fs interval).",
+                location, num_samples, interval,
+            )
             fingerprints = collect_fingerprint(
                 scanner=self._scanner,
                 location=location,
                 num_samples=num_samples,
                 interval=interval,
             )
-            for fp in fingerprints:
+            for i, fp in enumerate(fingerprints, 1):
                 raw_data = [r.to_dict() for r in fp.readings]
                 self._db.save_fingerprint(location, raw_data, fp.timestamp)
                 saved_count += 1
+                logger.info(
+                    "  ▸ [walk] '%s' sample %d/%d saved (%d networks).",
+                    location, i, num_samples, len(raw_data),
+                )
         else:
             # Fallback: take multiple scans using native/mock
             # Skip sleep for mock data (CI/testing) since there's no real
@@ -546,12 +554,21 @@ class WiFiIntegrationService:
             is_mock = first_scan.get("source") == "mock"
             self.save_fingerprint(location, first_scan)
             saved_count += 1
-            for _ in range(1, num_samples):
+            logger.info(
+                "  ▸ [walk] '%s' sample 1/%d saved (source=%s).",
+                location, num_samples, first_scan.get("source", "unknown"),
+            )
+            for i in range(1, num_samples):
                 if not is_mock:
                     time.sleep(interval)
                 scan = self.scan_current_environment()
                 self.save_fingerprint(location, scan)
                 saved_count += 1
+                if (i + 1) % 5 == 0 or i + 1 == num_samples:
+                    logger.info(
+                        "  ▸ [walk] '%s' sample %d/%d saved.",
+                        location, i + 1, num_samples,
+                    )
 
         logger.info(
             "Walk-mode collection for '%s': %d/%d fingerprints saved.",

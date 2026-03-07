@@ -36,7 +36,7 @@ hackaton-unergy/
 │   │   └── spaces.json          # Persistencia de espacios (creado automáticamente)
 │   └── tests/
 │       ├── test_api.py              # 17 tests (endpoints)
-│       └── test_persistence.py      # 34 tests (persistencia, WiFi, walk-mode, tracking, reset)
+│       └── test_persistence.py      # 37 tests (persistencia, WiFi, walk-mode, tracking, reset, background)
 └── remote-server/           # Hub WebSocket en tiempo real
     ├── main.py              # Punto de entrada
     ├── requirements.txt     # Dependencias Python
@@ -77,7 +77,7 @@ uvicorn main:app --reload --port 8001
 ### Ejecutar tests
 
 ```bash
-# Tests del servidor local (51 tests: 17 endpoints + 34 persistencia/WiFi/tracking/reset)
+# Tests del servidor local (56 tests: 19 endpoints + 37 persistencia/WiFi/tracking/reset/background)
 cd local-server && python -m pytest tests/ -v
 
 # Tests del servidor remoto (4 tests)
@@ -95,8 +95,9 @@ cd remote-server && python -m pytest tests/ -v
 | `GET` | `/auth/me` | Sí | Obtener usuario actual |
 | `GET` | `/instructions/register-space` | No | Instrucciones para registrar espacio |
 | `GET` | `/instructions/wifi-status` | No | Estado del módulo WiFi |
-| `POST` | `/spaces` | No | Registrar espacio (walk-mode, `samples` configurable) |
+| `POST` | `/spaces` | No | Registrar espacio (**retorna inmediato**, recolección WiFi en background) |
 | `GET` | `/spaces` | No | Listar espacios |
+| `GET` | `/spaces/collection-status/{name}` | No | Estado de recolección en background (collecting/done/error) |
 | `GET` | `/spaces/{id}` | No | Obtener espacio por ID |
 | `DELETE` | `/spaces/reset` | No | **Resetear todo** (espacios, fingerprints, modelos) |
 | `POST` | `/tracking/start` | No | Iniciar tracking continuo (`interval` configurable) |
@@ -115,15 +116,14 @@ curl -X POST http://localhost:8000/auth/register \
 ### Ejemplo: Registrar espacio
 
 ```bash
-# Walk-mode con 20 muestras (por defecto, el usuario camina por el espacio)
+# Retorna al instante — recolección WiFi ocurre en segundo plano
 curl -X POST http://localhost:8000/spaces \
   -H "Content-Type: application/json" \
-  -d '{"name":"Cocina","space_type":"kitchen"}'
+  -d '{"name":"Cocina","space_type":"kitchen","samples":5}'
 
-# Menos muestras para pruebas rápidas
-curl -X POST http://localhost:8000/spaces \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Sala","space_type":"living_room","samples":5}'
+# Consultar el progreso de la recolección
+curl http://localhost:8000/spaces/collection-status/Cocina
+# → {"status":"done","fingerprints_saved":5,"model_trained":true,...}
 ```
 
 ### Ejemplo: Tracking (predicción continua)

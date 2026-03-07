@@ -456,3 +456,54 @@ class TestResetAPI:
         assert resp.status_code == 200
         body = resp.json()
         assert body["name"] == "WalkTest"
+
+
+# ── Background collection + collection-status API ────────────────────
+
+
+class TestBackgroundCollectionAPI:
+    """Test that POST /spaces returns immediately and background collection works."""
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app)
+
+    def test_register_returns_immediately_with_feedback(self, client):
+        """POST /spaces should return fast with collection_status=collecting."""
+        import time
+        start = time.monotonic()
+        resp = client.post(
+            "/spaces",
+            json={"name": "FastReturn", "space_type": "room", "samples": 10},
+        )
+        elapsed = time.monotonic() - start
+        assert resp.status_code == 200
+        body = resp.json()
+        # Response should come back quickly (< 5 s), not 20+ seconds
+        assert elapsed < 5, f"Registration took {elapsed:.1f}s — should be instant"
+        # Check feedback
+        feedback = body.get("registration_feedback")
+        assert feedback is not None
+        assert feedback["collection_status"] == "collecting"
+        assert feedback["samples_requested"] == 10
+
+    def test_collection_status_endpoint(self, client):
+        """GET /spaces/collection-status/{name} returns status."""
+        client.post(
+            "/spaces",
+            json={"name": "StatusTest", "space_type": "room", "samples": 2},
+        )
+        resp = client.get("/spaces/collection-status/StatusTest")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["space_name"] == "StatusTest"
+        # Status is either 'collecting' (background running) or 'done'
+        assert body["status"] in ("collecting", "done")
+
+    def test_collection_status_unknown(self, client):
+        """Querying status for unknown space returns status=unknown."""
+        resp = client.get("/spaces/collection-status/NonExistent")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unknown"

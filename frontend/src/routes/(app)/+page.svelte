@@ -23,6 +23,7 @@
 	// Form state
 	let newName = $state('');
 	let newType = $state('room');
+	let newSamples = $state(5);
 
 	const spaceTypes = [
 		{ value: 'room', label: 'Habitación', icon: Home },
@@ -64,11 +65,24 @@
 		}
 		creating = true;
 		try {
-			const space = await spaceService.create({ name: newName.trim(), space_type: newType });
+			const space = await spaceService.create({
+				name: newName.trim(),
+				space_type: newType,
+				samples: newSamples,
+			});
 			spaces = [...spaces, space];
-			toast.success(`Espacio "${space.name}" registrado exitosamente`);
+			const feedback = space.registration_feedback;
+			if (feedback) {
+				toast.success(
+					`Espacio "${space.name}" registrado ✔ ` +
+					`Recolectando ${feedback.samples_requested} muestras WiFi en segundo plano…`
+				);
+			} else {
+				toast.success(`Espacio "${space.name}" registrado exitosamente`);
+			}
 			newName = '';
 			newType = 'room';
+			newSamples = 5;
 			dialogOpen = false;
 		} catch (err) {
 			console.error('Error creating space:', err);
@@ -104,6 +118,7 @@
 					<Dialog.Title>Registrar nuevo espacio</Dialog.Title>
 					<Dialog.Description>
 						Registra un nuevo espacio usando el entorno WiFi actual para posicionamiento.
+						Las muestras se recolectan en segundo plano — camina por el espacio para mejor precisión.
 					</Dialog.Description>
 				</Dialog.Header>
 				<div class="grid gap-4 py-4">
@@ -127,6 +142,19 @@
 								{/each}
 							</Select.Content>
 						</Select.Root>
+					</div>
+					<div class="grid gap-2">
+						<Label for="samples">Muestras WiFi ({newSamples})</Label>
+						<Input
+							id="samples"
+							type="range"
+							min="1"
+							max="30"
+							bind:value={newSamples}
+						/>
+						<p class="text-xs text-muted-foreground">
+							{newSamples} muestras · Se recolectan en segundo plano (~{newSamples * 2}s)
+						</p>
 					</div>
 				</div>
 				<Dialog.Footer>
@@ -259,6 +287,11 @@
 									<Radio class="size-3.5" />
 									<span>Fuente: {space.wifi_metadata.source}</span>
 								</div>
+								{#if space.registration_feedback}
+									<div class="flex items-center gap-2">
+										<span>📡 {space.registration_feedback.samples_requested} muestras · {space.registration_feedback.collection_status === 'collecting' ? 'Recolectando…' : 'Completado'}</span>
+									</div>
+								{/if}
 								<p class="text-xs">
 									Registrado: {new Date(space.created_at).toLocaleDateString('es-CO', { dateStyle: 'medium' })}
 								</p>
