@@ -4,7 +4,7 @@
 	import {
 		Wifi, Plus, MapPin, Radio, Home, Building, ChefHat, Warehouse,
 		LayoutDashboard, Navigation, Power, PowerOff, Activity, Target, Clock,
-		BarChart3, Eye, Zap,
+		BarChart3, Eye, Zap, Sparkles, CircleDot, TrendingUp, Loader2,
 	} from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -42,7 +42,6 @@
 	let collectingSpaces: Set<string> = $state(new Set());
 	let collectionPollInterval: ReturnType<typeof setInterval> | null = $state(null);
 
-	// Polling interval matches the user-selected tracking interval
 	const TRACKING_POLL_MS = 3000;
 	const COLLECTION_POLL_MS = 3000;
 
@@ -68,8 +67,8 @@
 	}
 
 	function getConfidenceColor(confidence: number): string {
-		if (confidence >= 0.8) return 'text-green-500';
-		if (confidence >= 0.5) return 'text-yellow-500';
+		if (confidence >= 0.8) return 'text-emerald-500';
+		if (confidence >= 0.5) return 'text-amber-500';
 		return 'text-red-400';
 	}
 
@@ -103,12 +102,10 @@
 			spaces = spacesData;
 			wifiStatus = wifi;
 
-			// Check if a trained model is available
 			if (diag) {
 				modelReady = !!diag.model_available;
 			}
 
-			// Check for spaces still collecting in background
 			for (const space of spacesData) {
 				if (space.registration_feedback?.collection_status === 'collecting') {
 					collectingSpaces.add(space.name);
@@ -118,7 +115,6 @@
 				startCollectionPolling();
 			}
 
-			// Sync tracking state from backend
 			if (trackingStatus.active) {
 				trackingActive = true;
 				if (trackingStatus.latest_prediction) {
@@ -246,7 +242,6 @@
 					`Espacio "${space.name}" registrado ✔ ` +
 					`Recolectando ${feedback.samples_requested} muestras WiFi — ¡camina por el espacio!`
 				);
-				// Start polling collection status
 				collectingSpaces.add(spaceName);
 				startCollectionPolling();
 			} else {
@@ -300,7 +295,6 @@
 					collectingSpaces.delete(name);
 					changed = true;
 
-					// Update space in list
 					const updatedSpace = spaces.find(s => s.name === name);
 					if (updatedSpace?.registration_feedback) {
 						updatedSpace.registration_feedback.collection_status = 'done';
@@ -311,7 +305,7 @@
 							updatedSpace.registration_feedback.model_trained = true;
 							updatedSpace.registration_feedback.model_accuracy = cs.model_accuracy ?? undefined;
 						}
-						spaces = [...spaces]; // Trigger reactivity
+						spaces = [...spaces];
 					}
 
 					if (cs.model_trained) {
@@ -359,116 +353,212 @@
 </script>
 
 <div class="mx-auto w-full max-w-5xl space-y-8">
-	<!-- Header -->
-	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-3xl font-bold tracking-tight">Unergy</h1>
-			<p class="text-muted-foreground">Plataforma de contexto energético y posicionamiento espacial</p>
-		</div>
-		<Dialog.Root bind:open={dialogOpen}>
-			<Dialog.Trigger>
-				{#snippet child({ props })}
-					<Button {...props}>
-						<Plus class="mr-2 size-4" />
-						Registrar espacio
-					</Button>
-				{/snippet}
-			</Dialog.Trigger>
-			<Dialog.Content>
-				<Dialog.Header>
-					<Dialog.Title>Registrar nuevo espacio</Dialog.Title>
-					<Dialog.Description>
-						Registra un nuevo espacio usando el entorno WiFi actual para posicionamiento.
-						Las muestras se recolectan en segundo plano — camina por el espacio para mejor precisión.
-					</Dialog.Description>
-				</Dialog.Header>
-				<div class="grid gap-4 py-4">
-					<div class="grid gap-2">
-						<Label for="space-name">Nombre del espacio</Label>
-						<Input
-							id="space-name"
-							placeholder="Ej: Cocina principal"
-							bind:value={newName}
-						/>
-					</div>
-					<div class="grid gap-2">
-						<Label>Tipo de espacio</Label>
-						<Select.Root bind:value={newType}>
-							<Select.Trigger>
-								{getSpaceLabel(newType)}
-							</Select.Trigger>
-							<Select.Content>
-								{#each spaceTypes as st}
-									<Select.Item value={st.value}>{st.label}</Select.Item>
-								{/each}
-							</Select.Content>
-						</Select.Root>
-					</div>
-					<div class="grid gap-2">
-						<Label for="samples">Muestras WiFi ({newSamples})</Label>
-						<Input
-							id="samples"
-							type="range"
-							min="1"
-							max="30"
-							bind:value={newSamples}
-						/>
-						<p class="text-xs text-muted-foreground">
-							{newSamples} muestras · Se recolectan en segundo plano
-						</p>
-					</div>
+	<!-- ═══════════════════ Hero Header ═══════════════════ -->
+	<div class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary/90 to-purple-700 p-8 text-white shadow-xl shadow-primary/20">
+		<!-- Decorative blurs -->
+		<div class="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-white/10 blur-3xl"></div>
+		<div class="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-purple-400/20 blur-3xl"></div>
+
+		<div class="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+			<div class="space-y-2">
+				<div class="flex items-center gap-2">
+					<Sparkles class="size-5 text-purple-200" />
+					<span class="text-sm font-medium text-purple-200">Posicionamiento WiFi inteligente</span>
 				</div>
-				<Dialog.Footer>
-					<Dialog.Close>
-						{#snippet child({ props })}
-							<Button variant="outline" {...props}>Cancelar</Button>
-						{/snippet}
-					</Dialog.Close>
-					<Button onclick={createSpace} disabled={creating}>
-						{#if creating}
-							Registrando...
-						{:else}
-							Registrar
-						{/if}
-					</Button>
-				</Dialog.Footer>
-			</Dialog.Content>
-		</Dialog.Root>
+				<h1 class="text-3xl font-bold tracking-tight sm:text-4xl">Panel de control</h1>
+				<p class="max-w-md text-purple-100/80">
+					Registra espacios, entrena modelos y detecta tu ubicación en tiempo real usando señales WiFi.
+				</p>
+			</div>
+			<Dialog.Root bind:open={dialogOpen}>
+				<Dialog.Trigger>
+					{#snippet child({ props })}
+						<Button {...props} class="gap-2 border-white/20 bg-white/15 text-white shadow-lg backdrop-blur-sm hover:bg-white/25">
+							<Plus class="size-4" />
+							Registrar espacio
+						</Button>
+					{/snippet}
+				</Dialog.Trigger>
+				<Dialog.Content>
+					<Dialog.Header>
+						<Dialog.Title>Registrar nuevo espacio</Dialog.Title>
+						<Dialog.Description>
+							Registra un nuevo espacio usando el entorno WiFi actual para posicionamiento.
+							Las muestras se recolectan en segundo plano — camina por el espacio para mejor precisión.
+						</Dialog.Description>
+					</Dialog.Header>
+					<div class="grid gap-4 py-4">
+						<div class="grid gap-2">
+							<Label for="space-name">Nombre del espacio</Label>
+							<Input
+								id="space-name"
+								placeholder="Ej: Cocina principal"
+								bind:value={newName}
+							/>
+						</div>
+						<div class="grid gap-2">
+							<Label>Tipo de espacio</Label>
+							<Select.Root bind:value={newType}>
+								<Select.Trigger>
+									{getSpaceLabel(newType)}
+								</Select.Trigger>
+								<Select.Content>
+									{#each spaceTypes as st}
+										<Select.Item value={st.value}>{st.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+						<div class="grid gap-2">
+							<Label for="samples">Muestras WiFi ({newSamples})</Label>
+							<Input
+								id="samples"
+								type="range"
+								min="1"
+								max="30"
+								bind:value={newSamples}
+							/>
+							<p class="text-xs text-muted-foreground">
+								{newSamples} muestras · Se recolectan en segundo plano
+							</p>
+						</div>
+					</div>
+					<Dialog.Footer>
+						<Dialog.Close>
+							{#snippet child({ props })}
+								<Button variant="outline" {...props}>Cancelar</Button>
+							{/snippet}
+						</Dialog.Close>
+						<Button onclick={createSpace} disabled={creating}>
+							{#if creating}
+								<Loader2 class="mr-2 size-4 animate-spin" />
+								Registrando…
+							{:else}
+								Registrar
+							{/if}
+						</Button>
+					</Dialog.Footer>
+				</Dialog.Content>
+			</Dialog.Root>
+		</div>
 	</div>
 
-	<Separator />
+	<!-- ═══════════════════ Stats Row ═══════════════════ -->
+	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+		<Card.Root class="group relative overflow-hidden transition-shadow hover:shadow-md">
+			<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent"></div>
+			<Card.Header class="pb-2">
+				<div class="flex items-center gap-2">
+					<div class="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+						<Wifi class="size-4 text-primary" />
+					</div>
+					<Card.Title class="text-sm font-medium text-muted-foreground">Estado WiFi</Card.Title>
+				</div>
+			</Card.Header>
+			<Card.Content>
+				{#if wifiStatus}
+					<Badge variant={wifiStatus.wifi_available ? 'default' : 'outline'}>
+						{wifiStatus.wifi_available ? '● Disponible' : 'No disponible'}
+					</Badge>
+				{:else if loading}
+					<span class="text-sm text-muted-foreground">Cargando…</span>
+				{:else}
+					<Badge variant="outline">Sin conexión</Badge>
+				{/if}
+			</Card.Content>
+		</Card.Root>
 
-	<!-- ========================== -->
-	<!-- LIVE TRACKING SECTION      -->
-	<!-- ========================== -->
+		<Card.Root class="group relative overflow-hidden transition-shadow hover:shadow-md">
+			<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent"></div>
+			<Card.Header class="pb-2">
+				<div class="flex items-center gap-2">
+					<div class="flex size-8 items-center justify-center rounded-lg bg-purple-500/10">
+						<Radio class="size-4 text-purple-500" />
+					</div>
+					<Card.Title class="text-sm font-medium text-muted-foreground">Redes detectadas</Card.Title>
+				</div>
+			</Card.Header>
+			<Card.Content>
+				<p class="text-3xl font-bold tracking-tight">
+					{wifiStatus?.networks_detected ?? '—'}
+				</p>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="group relative overflow-hidden transition-shadow hover:shadow-md">
+			<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-violet-500/5 to-transparent"></div>
+			<Card.Header class="pb-2">
+				<div class="flex items-center gap-2">
+					<div class="flex size-8 items-center justify-center rounded-lg bg-violet-500/10">
+						<MapPin class="size-4 text-violet-500" />
+					</div>
+					<Card.Title class="text-sm font-medium text-muted-foreground">Espacios registrados</Card.Title>
+				</div>
+			</Card.Header>
+			<Card.Content>
+				<p class="text-3xl font-bold tracking-tight">
+					{spaces.length}
+				</p>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="group relative overflow-hidden transition-shadow hover:shadow-md">
+			<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent"></div>
+			<Card.Header class="pb-2">
+				<div class="flex items-center gap-2">
+					<div class="flex size-8 items-center justify-center rounded-lg bg-emerald-500/10">
+						<TrendingUp class="size-4 text-emerald-500" />
+					</div>
+					<Card.Title class="text-sm font-medium text-muted-foreground">Modelo ML</Card.Title>
+				</div>
+			</Card.Header>
+			<Card.Content>
+				{#if modelReady}
+					<Badge class="bg-emerald-600 text-white">✓ Listo</Badge>
+				{:else if spaces.length >= 2}
+					<Badge variant="secondary">Entrenando…</Badge>
+				{:else if spaces.length === 1}
+					<Badge variant="outline">Falta 1 espacio</Badge>
+				{:else}
+					<Badge variant="outline">Sin datos</Badge>
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</div>
+
+	<!-- ═══════════════════ Live Tracking ═══════════════════ -->
 	<div class="space-y-4">
-		<div class="flex items-center gap-2">
-			<Navigation class="size-5" />
+		<div class="flex items-center gap-2.5">
+			<div class="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+				<Navigation class="size-4 text-primary" />
+			</div>
 			<h2 class="text-xl font-semibold">Ubicación en vivo</h2>
 			{#if trackingActive}
-				<span class="relative ml-2 flex size-3">
-					<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
-					<span class="relative inline-flex size-3 rounded-full bg-green-500"></span>
+				<span class="relative ml-1 flex size-2.5">
+					<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+					<span class="relative inline-flex size-2.5 rounded-full bg-emerald-500"></span>
 				</span>
+				<Badge variant="secondary" class="text-xs font-normal">Activo</Badge>
 			{/if}
 		</div>
 
-		<!-- Main Tracking Card -->
-		<Card.Root class={trackingActive ? 'border-green-500/30 shadow-lg shadow-green-500/5' : ''}>
-			<Card.Content class="p-6">
+		<Card.Root class={`relative overflow-hidden transition-all duration-300 ${trackingActive ? 'border-emerald-500/30 shadow-lg shadow-emerald-500/5' : ''}`}>
+			{#if trackingActive}
+				<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent"></div>
+			{/if}
+			<Card.Content class="relative p-6">
 				<div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
 					<!-- Current Location Display -->
-					<div class="flex-1 space-y-4">
-						<!-- Location Badge / Hero -->
+					<div class="flex-1 space-y-5">
 						<div class="flex items-center gap-4">
-							<div class={`flex size-16 items-center justify-center rounded-2xl ${trackingActive ? 'bg-green-500/10' : 'bg-muted'}`}>
+							<div class={`flex size-16 items-center justify-center rounded-2xl transition-colors duration-300 ${trackingActive ? 'bg-emerald-500/10' : 'bg-muted'}`}>
 								{#if currentLocation && currentLocation.location !== 'unknown'}
 									{@const LocIcon = getSpaceIcon(
 										spaces.find(s => s.name === currentLocation?.location)?.space_type ?? ''
 									)}
-									<LocIcon class={`size-8 ${trackingActive ? 'text-green-500' : 'text-muted-foreground'}`} />
+									<LocIcon class={`size-8 ${trackingActive ? 'text-emerald-500' : 'text-muted-foreground'}`} />
 								{:else}
-									<Target class={`size-8 ${trackingActive ? 'text-green-500 animate-pulse' : 'text-muted-foreground'}`} />
+									<Target class={`size-8 ${trackingActive ? 'text-emerald-500 animate-pulse' : 'text-muted-foreground'}`} />
 								{/if}
 							</div>
 							<div>
@@ -479,7 +569,7 @@
 									{#if currentLocation && currentLocation.location !== 'unknown'}
 										{currentLocation.location}
 									{:else if trackingActive}
-										Detectando...
+										Detectando…
 									{:else}
 										—
 									{/if}
@@ -496,7 +586,7 @@
 										{/if}
 									</div>
 								{:else if !modelReady && spaces.length >= 2}
-									<p class="mt-1 text-sm text-yellow-600">
+									<p class="mt-1 text-sm text-amber-600">
 										⏳ El modelo se está entrenando con los datos recolectados…
 									</p>
 								{:else if !modelReady && spaces.length === 1}
@@ -508,7 +598,7 @@
 										Registra espacios en diferentes habitaciones para comenzar
 									</p>
 								{:else if currentLocation?.location === 'unknown' && modelReady}
-									<p class="mt-1 text-sm text-yellow-600">
+									<p class="mt-1 text-sm text-amber-600">
 										No se pudo determinar la ubicación — intenta moverte
 									</p>
 								{/if}
@@ -528,19 +618,19 @@
 
 						<!-- Location Probabilities -->
 						{#if currentLocation?.probabilities && Object.keys(currentLocation.probabilities).length > 0}
-							<div class="space-y-2">
+							<div class="space-y-3">
 								<p class="text-sm font-medium text-muted-foreground">Probabilidades por espacio</p>
-								<div class="space-y-1.5">
+								<div class="space-y-2">
 									{#each Object.entries(currentLocation.probabilities).sort((a, b) => b[1] - a[1]) as [loc, prob]}
 										<div class="flex items-center gap-3">
 											<span class="w-24 truncate text-sm">{loc}</span>
-											<div class="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+											<div class="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
 												<div
-													class="h-full rounded-full bg-primary/60 transition-all duration-500"
+													class="h-full rounded-full bg-gradient-to-r from-primary/70 to-primary transition-all duration-500"
 													style="width: {prob * 100}%"
 												></div>
 											</div>
-											<span class="w-12 text-right text-xs text-muted-foreground">
+											<span class="w-12 text-right text-xs font-medium text-muted-foreground">
 												{formatConfidence(prob)}
 											</span>
 										</div>
@@ -555,13 +645,13 @@
 						{#if !trackingActive}
 							<Button
 								size="lg"
-								class="gap-2 bg-green-600 text-white hover:bg-green-700"
+								class="gap-2 bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700"
 								onclick={startTracking}
 								disabled={trackingStarting || spaces.length === 0}
 							>
 								{#if trackingStarting}
-									<Activity class="size-5 animate-spin" />
-									Iniciando...
+									<Loader2 class="size-5 animate-spin" />
+									Iniciando…
 								{:else}
 									<Power class="size-5" />
 									Iniciar tracking
@@ -571,13 +661,13 @@
 							<Button
 								size="lg"
 								variant="destructive"
-								class="gap-2"
+								class="gap-2 shadow-lg"
 								onclick={stopTracking}
 								disabled={trackingStopping}
 							>
 								{#if trackingStopping}
-									<Activity class="size-5 animate-spin" />
-									Deteniendo...
+									<Loader2 class="size-5 animate-spin" />
+									Deteniendo…
 								{:else}
 									<PowerOff class="size-5" />
 									Detener tracking
@@ -602,7 +692,7 @@
 								<span>Cada</span>
 								<select
 									bind:value={trackingInterval}
-									class="rounded border border-input bg-background px-2 py-0.5 text-sm"
+									class="rounded-md border border-input bg-background px-2 py-0.5 text-sm transition-colors focus:border-primary focus:ring-1 focus:ring-primary/30"
 								>
 									<option value={1}>1s</option>
 									<option value={2}>2s</option>
@@ -617,7 +707,7 @@
 						{#if trackingActive}
 							<div class="flex items-center gap-3 text-xs text-muted-foreground">
 								<div class="flex items-center gap-1">
-									<Zap class="size-3" />
+									<Zap class="size-3 text-emerald-500" />
 									<span>{predictionCount} lecturas</span>
 								</div>
 								<div class="flex items-center gap-1">
@@ -632,7 +722,7 @@
 								Registra al menos 2 espacios para empezar a detectar tu ubicación
 							</p>
 						{:else if spaces.length === 1 && !modelReady}
-							<p class="max-w-48 text-center text-xs text-yellow-600">
+							<p class="max-w-48 text-center text-xs text-amber-600">
 								Falta 1 espacio más para entrenar el modelo
 							</p>
 						{:else if collectingSpaces.size > 0}
@@ -652,15 +742,15 @@
 					<div class="flex items-center gap-2">
 						<Activity class="size-4 text-muted-foreground" />
 						<Card.Title class="text-sm font-medium">Historial reciente</Card.Title>
-						<Badge variant="secondary">{locationHistory.length}</Badge>
+						<Badge variant="secondary" class="text-xs">{locationHistory.length}</Badge>
 					</div>
 				</Card.Header>
 				<Card.Content>
 					<div class="max-h-48 space-y-1 overflow-y-auto">
 						{#each locationHistory as entry, i}
-							<div class="flex items-center gap-3 rounded-md px-2 py-1.5 {i === 0 ? 'bg-muted/50' : ''}">
-								<div class="flex size-6 items-center justify-center rounded-full {i === 0 ? 'bg-green-500/20' : 'bg-muted'}">
-									<MapPin class="size-3 {i === 0 ? 'text-green-500' : 'text-muted-foreground'}" />
+							<div class="flex items-center gap-3 rounded-lg px-2 py-1.5 transition-colors {i === 0 ? 'bg-primary/5' : 'hover:bg-muted/50'}">
+								<div class="flex size-6 items-center justify-center rounded-full {i === 0 ? 'bg-primary/15' : 'bg-muted'}">
+									<MapPin class="size-3 {i === 0 ? 'text-primary' : 'text-muted-foreground'}" />
 								</div>
 								<span class="flex-1 text-sm {i === 0 ? 'font-medium' : 'text-muted-foreground'}">
 									{entry.location === 'unknown'
@@ -681,84 +771,14 @@
 		{/if}
 	</div>
 
-	<Separator />
-
-	<!-- WiFi Status -->
-	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-		<Card.Root>
-			<Card.Header>
-				<div class="flex items-center gap-2">
-					<Wifi class="size-4 text-muted-foreground" />
-					<Card.Title class="text-sm font-medium">Estado WiFi</Card.Title>
-				</div>
-			</Card.Header>
-			<Card.Content>
-				{#if wifiStatus}
-					<Badge variant={wifiStatus.wifi_available ? 'default' : 'outline'}>
-						{wifiStatus.wifi_available ? 'Disponible' : 'No disponible'}
-					</Badge>
-				{:else if loading}
-					<span class="text-sm text-muted-foreground">Cargando...</span>
-				{:else}
-					<Badge variant="outline">Sin conexión</Badge>
-				{/if}
-			</Card.Content>
-		</Card.Root>
-
-		<Card.Root>
-			<Card.Header>
-				<div class="flex items-center gap-2">
-					<Radio class="size-4 text-muted-foreground" />
-					<Card.Title class="text-sm font-medium">Redes detectadas</Card.Title>
-				</div>
-			</Card.Header>
-			<Card.Content>
-				<p class="text-2xl font-bold">
-					{wifiStatus?.networks_detected ?? '—'}
-				</p>
-			</Card.Content>
-		</Card.Root>
-
-		<Card.Root>
-			<Card.Header>
-				<div class="flex items-center gap-2">
-					<MapPin class="size-4 text-muted-foreground" />
-					<Card.Title class="text-sm font-medium">Espacios registrados</Card.Title>
-				</div>
-			</Card.Header>
-			<Card.Content>
-				<p class="text-2xl font-bold">
-					{spaces.length}
-				</p>
-			</Card.Content>
-		</Card.Root>
-
-		<Card.Root>
-			<Card.Header>
-				<div class="flex items-center gap-2">
-					<Target class="size-4 text-muted-foreground" />
-					<Card.Title class="text-sm font-medium">Modelo ML</Card.Title>
-				</div>
-			</Card.Header>
-			<Card.Content>
-				{#if modelReady}
-					<Badge class="bg-green-600 text-white">Listo</Badge>
-				{:else if spaces.length >= 2}
-					<Badge variant="secondary">Entrenando…</Badge>
-				{:else if spaces.length === 1}
-					<Badge variant="outline">Falta 1 espacio</Badge>
-				{:else}
-					<Badge variant="outline">Sin datos</Badge>
-				{/if}
-			</Card.Content>
-		</Card.Root>
-	</div>
-
-	<!-- Spaces List -->
+	<!-- ═══════════════════ Spaces List ═══════════════════ -->
 	<div>
-		<div class="mb-4 flex items-center gap-2">
-			<LayoutDashboard class="size-5" />
+		<div class="mb-4 flex items-center gap-2.5">
+			<div class="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+				<LayoutDashboard class="size-4 text-primary" />
+			</div>
 			<h2 class="text-xl font-semibold">Espacios</h2>
+			<Badge variant="secondary" class="text-xs">{spaces.length}</Badge>
 		</div>
 
 		{#if loading}
@@ -766,26 +786,31 @@
 				{#each [1, 2, 3] as _}
 					<Card.Root>
 						<Card.Header>
-							<div class="h-5 w-32 animate-pulse rounded bg-muted"></div>
-							<div class="h-4 w-20 animate-pulse rounded bg-muted"></div>
+							<div class="h-5 w-32 animate-pulse rounded-md bg-muted"></div>
+							<div class="h-4 w-20 animate-pulse rounded-md bg-muted"></div>
 						</Card.Header>
 						<Card.Content>
-							<div class="h-4 w-full animate-pulse rounded bg-muted"></div>
+							<div class="space-y-2">
+								<div class="h-4 w-full animate-pulse rounded-md bg-muted"></div>
+								<div class="h-4 w-3/4 animate-pulse rounded-md bg-muted"></div>
+							</div>
 						</Card.Content>
 					</Card.Root>
 				{/each}
 			</div>
 		{:else if spaces.length === 0}
-			<Card.Root>
-				<Card.Content class="flex flex-col items-center justify-center py-12">
-					<MapPin class="mb-4 size-12 text-muted-foreground" />
-					<p class="text-lg font-medium">No hay espacios registrados</p>
-					<p class="mb-4 text-center text-sm text-muted-foreground">
+			<Card.Root class="border-dashed">
+				<Card.Content class="flex flex-col items-center justify-center py-16">
+					<div class="mb-4 flex size-16 items-center justify-center rounded-2xl bg-primary/10">
+						<MapPin class="size-8 text-primary" />
+					</div>
+					<p class="text-lg font-semibold">No hay espacios registrados</p>
+					<p class="mb-6 max-w-sm text-center text-sm text-muted-foreground">
 						Registra al menos 2 espacios (ej: cocina y sala) para comenzar
 						la detección automática de ubicación por WiFi
 					</p>
-					<Button onclick={() => (dialogOpen = true)}>
-						<Plus class="mr-2 size-4" />
+					<Button onclick={() => (dialogOpen = true)} class="gap-2">
+						<Plus class="size-4" />
 						Registrar espacio
 					</Button>
 				</Card.Content>
@@ -795,29 +820,34 @@
 				{#each spaces as space}
 					{@const Icon = getSpaceIcon(space.space_type)}
 					{@const isCurrentSpace = trackingActive && currentLocation?.location === space.name}
-					<Card.Root class={isCurrentSpace ? 'border-green-500/50 ring-1 ring-green-500/20' : ''}>
-						<Card.Header>
+					<Card.Root class={`group relative overflow-hidden transition-all duration-300 hover:shadow-md ${isCurrentSpace ? 'border-emerald-500/40 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/20' : ''}`}>
+						{#if isCurrentSpace}
+							<div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent"></div>
+						{/if}
+						<Card.Header class="relative">
 							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-2">
-									<Icon class="size-5 {isCurrentSpace ? 'text-green-500' : 'text-muted-foreground'}" />
-									<Card.Title>{space.name}</Card.Title>
+								<div class="flex items-center gap-2.5">
+									<div class={`flex size-9 items-center justify-center rounded-lg transition-colors ${isCurrentSpace ? 'bg-emerald-500/15' : 'bg-muted'}`}>
+										<Icon class={`size-4.5 ${isCurrentSpace ? 'text-emerald-500' : 'text-muted-foreground'}`} />
+									</div>
+									<Card.Title class="text-base">{space.name}</Card.Title>
 								</div>
 								<div class="flex items-center gap-1.5">
 									{#if isCurrentSpace}
-										<Badge class="gap-1 bg-green-600 text-white">
-											<span class="relative flex size-2">
+										<Badge class="gap-1 bg-emerald-600 text-white">
+											<span class="relative flex size-1.5">
 												<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75"></span>
-												<span class="relative inline-flex size-2 rounded-full bg-white"></span>
+												<span class="relative inline-flex size-1.5 rounded-full bg-white"></span>
 											</span>
 											Aquí
 										</Badge>
 									{/if}
-									<Badge variant="secondary">{getSpaceLabel(space.space_type)}</Badge>
+									<Badge variant="secondary" class="text-xs">{getSpaceLabel(space.space_type)}</Badge>
 								</div>
 							</div>
 						</Card.Header>
-						<Card.Content>
-							<div class="space-y-2 text-sm text-muted-foreground">
+						<Card.Content class="relative">
+							<div class="space-y-2.5 text-sm text-muted-foreground">
 								<div class="flex items-center gap-2">
 									<Wifi class="size-3.5" />
 									<span>{space.wifi_metadata.networks_detected} redes detectadas</span>
@@ -829,17 +859,17 @@
 								{#if space.registration_feedback}
 									<div class="flex items-center gap-2">
 										{#if space.registration_feedback.collection_status === 'collecting'}
-											<span class="flex items-center gap-1">
+											<span class="flex items-center gap-1.5 text-primary">
 												<span class="relative flex size-2">
-													<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
-													<span class="relative inline-flex size-2 rounded-full bg-blue-500"></span>
+													<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+													<span class="relative inline-flex size-2 rounded-full bg-primary"></span>
 												</span>
-												📡 Recolectando {space.registration_feedback.samples_requested} muestras… ¡Camina!
+												Recolectando {space.registration_feedback.samples_requested} muestras… ¡Camina!
 											</span>
 										{:else if space.registration_feedback.collection_status === 'error'}
-											<span>⚠️ Error en recolección</span>
+											<span class="text-destructive">⚠️ Error en recolección</span>
 										{:else if space.registration_feedback.model_trained}
-											<span>✅ {space.registration_feedback.fingerprints_saved} muestras · Modelo entrenado ({formatAccuracy(space.registration_feedback.model_accuracy)})</span>
+											<span class="text-emerald-600">✓ {space.registration_feedback.fingerprints_saved} muestras · Modelo entrenado ({formatAccuracy(space.registration_feedback.model_accuracy)})</span>
 										{:else}
 											<span>📡 {space.registration_feedback.fingerprints_saved} muestras recolectadas</span>
 										{/if}
