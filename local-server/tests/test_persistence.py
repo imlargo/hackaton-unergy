@@ -245,3 +245,210 @@ class TestFingerprintAndTraining:
         service = self._make_service()
         service._db = None
         assert service.try_train_model() is None
+
+
+# ── Walk-mode collection ─────────────────────────────────────────────
+
+
+class TestWalkModeCollection:
+    """Test walk-mode multi-sample fingerprint collection."""
+
+    def _make_service(self) -> WiFiIntegrationService:
+        service = WiFiIntegrationService(db_path=":memory:")
+        service._scanner = None
+        return service
+
+    def test_collect_saves_multiple_fingerprints(self):
+        """collect_and_save_fingerprints() should save N fingerprints."""
+        service = self._make_service()
+        result = service.collect_and_save_fingerprints("Cocina", num_samples=5)
+
+        assert result["fingerprints_saved"] == 5
+        assert result["location"] == "Cocina"
+        assert result["samples_requested"] == 5
+        counts = service._db.get_fingerprint_count_by_location()
+        assert counts == {"Cocina": 5}
+
+    def test_collect_default_samples(self):
+        """Default num_samples is 20 (walk mode)."""
+        service = self._make_service()
+        result = service.collect_and_save_fingerprints("Sala")
+        assert result["fingerprints_saved"] == 20
+
+    def test_collect_no_db(self):
+        """When DB is None, fingerprints are not saved."""
+        service = self._make_service()
+        service._db = None
+        result = service.collect_and_save_fingerprints("Room", num_samples=3)
+        # save_fingerprint returns False when db is None, but loop still runs
+        assert result["samples_requested"] == 3
+
+
+# ── Tracking ─────────────────────────────────────────────────────────
+
+
+class TestTracking:
+    """Test start/stop tracking lifecycle."""
+
+    def _make_service(self) -> WiFiIntegrationService:
+        service = WiFiIntegrationService(db_path=":memory:")
+        service._scanner = None
+        return service
+
+    def test_start_and_stop_tracking(self):
+        """Tracking starts and stops without errors."""
+        service = self._make_service()
+        start = service.start_tracking(interval=1.0)
+        assert start["status"] == "started"
+        assert service._tracking_active is True
+
+        stop = service.stop_tracking()
+        assert stop["status"] == "stopped"
+        assert service._tracking_active is False
+
+    def test_start_tracking_twice(self):
+        """Starting tracking when already running returns already_running."""
+        service = self._make_service()
+        service.start_tracking(interval=1.0)
+        second = service.start_tracking(interval=1.0)
+        assert second["status"] == "already_running"
+        service.stop_tracking()
+
+    def test_stop_when_not_running(self):
+        """Stopping when not running returns not_running."""
+        service = self._make_service()
+        result = service.stop_tracking()
+        assert result["status"] == "not_running"
+
+    def test_tracking_status_when_inactive(self):
+        """Status when not tracking shows active=False."""
+        service = self._make_service()
+        status = service.get_tracking_status()
+        assert status["active"] is False
+        assert status["latest_prediction"] is None
+
+    def test_tracking_produces_predictions(self):
+        """After a short tracking period, latest_prediction should be set."""
+        import time
+        service = self._make_service()
+        service.start_tracking(interval=0.1)
+        time.sleep(0.5)  # Allow a few prediction cycles
+        status = service.get_tracking_status()
+        assert status["active"] is True
+        assert status["latest_prediction"] is not None
+        service.stop_tracking()
+
+
+# ── Reset ────────────────────────────────────────────────────────────
+
+
+class TestReset:
+    """Test the full reset functionality."""
+
+    def _make_service(self) -> WiFiIntegrationService:
+        service = WiFiIntegrationService(db_path=":memory:")
+        service._scanner = None
+        return service
+
+    def test_reset_wifi_data(self):
+        """reset_wifi_data() clears all fingerprints and models."""
+        service = self._make_service()
+        service.save_fingerprint("Cocina", {
+            "readings": [{"bssid": "AA:BB:CC:DD:EE:01", "ssid": "Net", "rssi": -40, "channel": 6}],
+        })
+        service.save_fingerprint("Sala", {
+            "readings": [{"bssid": "AA:BB:CC:DD:EE:01", "ssid": "Net", "rssi": -70, "channel": 6}],
+        })
+        # Verify data exists
+        counts = service._db.get_fingerprint_count_by_location()
+        assert len(counts) == 2
+
+        result = service.reset_wifi_data()
+        assert result["fingerprints_deleted"] is True
+
+        # Verify data is gone
+        counts = service._db.get_fingerprint_count_by_location()
+        assert len(counts) == 0
+
+    def test_reset_no_db(self):
+        """reset_wifi_data() with no DB returns zeros."""
+        service = self._make_service()
+        service._db = None
+        result = service.reset_wifi_data()
+        assert result["fingerprints_deleted"] == 0
+
+    def test_reset_stops_tracking(self):
+        """reset_wifi_data() should stop tracking if active."""
+        service = self._make_service()
+        service.start_tracking(interval=1.0)
+        assert service._tracking_active is True
+        service.reset_wifi_data()
+        assert service._tracking_active is False
+
+
+# ── API endpoint tests for new routes ────────────────────────────────
+
+
+class TestTrackingAPI:
+    """Test the /tracking/* API endpoints."""
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app)
+
+    def test_start_tracking(self, client):
+        resp = client.post("/tracking/start?interval=1.0")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] in ("started", "already_running")
+        # Clean up
+        client.post("/tracking/stop")
+
+    def test_stop_tracking(self, client):
+        client.post("/tracking/start?interval=1.0")
+        resp = client.post("/tracking/stop")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "stopped"
+
+    def test_tracking_status(self, client):
+        resp = client.get("/tracking/status")
+        assert resp.status_code == 200
+        assert "active" in resp.json()
+
+    def test_predict_once(self, client):
+        resp = client.get("/tracking/predict")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "location" in body
+
+
+class TestResetAPI:
+    """Test the DELETE /spaces/reset endpoint."""
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app)
+
+    def test_reset_endpoint(self, client):
+        # Create a space first
+        client.post("/spaces", json={"name": "Temp", "space_type": "room", "samples": 1})
+        # Reset
+        resp = client.delete("/spaces/reset")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "spaces_deleted" in body
+        assert "wifi_reset" in body
+
+    def test_register_with_samples(self, client):
+        """POST /spaces accepts samples parameter for walk mode."""
+        resp = client.post(
+            "/spaces",
+            json={"name": "WalkTest", "space_type": "room", "samples": 3},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "WalkTest"

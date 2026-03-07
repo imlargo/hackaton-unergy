@@ -11,6 +11,7 @@ class SpaceCreate(BaseModel):
 
     name: str
     space_type: str  # e.g. "room", "office", "kitchen", "garage"
+    samples: int = Field(default=20, ge=1, le=100, description="Number of WiFi samples to collect (walk mode)")
 
 
 class Space(BaseModel):

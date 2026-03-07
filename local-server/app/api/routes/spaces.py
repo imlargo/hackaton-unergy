@@ -28,7 +28,11 @@ def register_space(
     data: SpaceCreate,
     space_service: SpaceService = Depends(get_space_service),
 ):
-    """Register a new space using current WiFi environment."""
+    """Register a new space with walk-mode WiFi fingerprinting.
+
+    Collects multiple WiFi samples while the user moves around the space.
+    Default: 20 samples (walk mode). Override with `samples` field.
+    """
     return space_service.register_space(user_id=DEFAULT_USER_ID, data=data)
 
 
@@ -47,3 +51,11 @@ def get_space(
 ):
     """Get a specific space by ID."""
     return space_service.get_space(space_id=space_id, user_id=DEFAULT_USER_ID)
+
+
+@router.delete("/reset")
+def reset_all(
+    space_service: SpaceService = Depends(get_space_service),
+):
+    """Reset everything: delete all spaces, fingerprints, and trained models."""
+    return space_service.reset_all()

@@ -81,6 +81,14 @@ class SpaceRepository:
             self._save()
         return removed
 
+    def delete_all(self) -> int:
+        """Delete all spaces.  Returns the number deleted."""
+        count = len(self._spaces)
+        self._spaces.clear()
+        self._next_id = 1
+        self._save()
+        return count
+
     # ------------------------------------------------------------------
     # Persistence helpers
     # ------------------------------------------------------------------

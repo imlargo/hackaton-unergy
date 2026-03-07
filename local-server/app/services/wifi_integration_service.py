@@ -23,6 +23,8 @@ import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -223,6 +225,12 @@ class WiFiIntegrationService:
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._scanner: Any | None = None
         self._db: Any | None = None
+
+        # Tracking state
+        self._tracking_active = False
+        self._tracking_thread: threading.Thread | None = None
+        self._tracking_lock = threading.Lock()
+        self._latest_prediction: dict[str, Any] | None = None
 
         if _WIFIPOS_AVAILABLE:
             # Initialize wifipos database for fingerprint storage
@@ -428,6 +436,161 @@ class WiFiIntegrationService:
         except Exception as exc:
             logger.error(f"Location prediction failed: {exc}")
             return None
+
+    # ------------------------------------------------------------------
+    # Walk-mode fingerprint collection
+    # ------------------------------------------------------------------
+
+    def collect_and_save_fingerprints(
+        self,
+        location: str,
+        num_samples: int = 20,
+        interval: float = 2.0,
+    ) -> dict[str, Any]:
+        """Collect multiple WiFi fingerprints with walk/movement mode.
+
+        Equivalent to ``wifipos learn <location> --walk --samples N``.
+        The user should move around the space while samples are being
+        collected so the model captures signal variability.
+
+        Args:
+            location: The space/location name (e.g. "Cocina").
+            num_samples: Number of scans to collect.
+            interval: Seconds between scans.
+
+        Returns:
+            A dict with collection results.
+        """
+        saved_count = 0
+
+        if self._scanner is not None and _WIFIPOS_AVAILABLE and self._db is not None:
+            # Use the real wifipos collect_fingerprint
+            from wifipos.model.fingerprint import collect_fingerprint
+
+            fingerprints = collect_fingerprint(
+                scanner=self._scanner,
+                location=location,
+                num_samples=num_samples,
+                interval=interval,
+            )
+            for fp in fingerprints:
+                raw_data = [r.to_dict() for r in fp.readings]
+                self._db.save_fingerprint(location, raw_data, fp.timestamp)
+                saved_count += 1
+        else:
+            # Fallback: take multiple scans using native/mock
+            # Skip sleep for mock data (CI/testing) since there's no real
+            # signal variation to capture.
+            first_scan = self.scan_current_environment()
+            is_mock = first_scan.get("source") == "mock"
+            self.save_fingerprint(location, first_scan)
+            saved_count += 1
+            for i in range(1, num_samples):
+                if not is_mock:
+                    time.sleep(interval)
+                scan = self.scan_current_environment()
+                self.save_fingerprint(location, scan)
+                saved_count += 1
+
+        logger.info(
+            "Walk-mode collection for '%s': %d/%d fingerprints saved.",
+            location,
+            saved_count,
+            num_samples,
+        )
+        return {
+            "location": location,
+            "samples_requested": num_samples,
+            "fingerprints_saved": saved_count,
+        }
+
+    # ------------------------------------------------------------------
+    # Tracking (continuous location prediction)
+    # ------------------------------------------------------------------
+
+    def start_tracking(self, interval: float = 3.0) -> dict[str, Any]:
+        """Start continuous location tracking in a background thread.
+
+        Equivalent to ``wifipos track --interval N``.
+
+        Args:
+            interval: Seconds between predictions.
+
+        Returns:
+            A dict with tracking status.
+        """
+        with self._tracking_lock:
+            if self._tracking_active:
+                return {"status": "already_running", "interval": interval}
+
+            self._tracking_active = True
+            self._latest_prediction = None
+            self._tracking_thread = threading.Thread(
+                target=self._tracking_loop,
+                args=(interval,),
+                daemon=True,
+            )
+            self._tracking_thread.start()
+            logger.info("Tracking started (interval=%.1fs).", interval)
+            return {"status": "started", "interval": interval}
+
+    def stop_tracking(self) -> dict[str, Any]:
+        """Stop the background tracking thread."""
+        with self._tracking_lock:
+            if not self._tracking_active:
+                return {"status": "not_running"}
+
+            self._tracking_active = False
+
+        # Wait for the thread to finish (with timeout)
+        if self._tracking_thread is not None:
+            self._tracking_thread.join(timeout=10)
+            self._tracking_thread = None
+
+        logger.info("Tracking stopped.")
+        return {"status": "stopped"}
+
+    def get_tracking_status(self) -> dict[str, Any]:
+        """Return current tracking state and latest prediction."""
+        return {
+            "active": self._tracking_active,
+            "latest_prediction": self._latest_prediction,
+        }
+
+    def _tracking_loop(self, interval: float) -> None:
+        """Background loop that continuously predicts location."""
+        logger.info("Tracking loop started.")
+        while self._tracking_active:
+            prediction = self.get_current_location()
+            if prediction is not None:
+                prediction["timestamp"] = datetime.now().isoformat()
+                self._latest_prediction = prediction
+            time.sleep(interval)
+        logger.info("Tracking loop ended.")
+
+    # ------------------------------------------------------------------
+    # Reset
+    # ------------------------------------------------------------------
+
+    def reset_wifi_data(self) -> dict[str, Any]:
+        """Delete all fingerprints and trained models from wifipos DB.
+
+        Equivalent to ``wifipos reset``.
+        """
+        # Stop tracking first
+        if self._tracking_active:
+            self.stop_tracking()
+
+        if self._db is None:
+            return {"fingerprints_deleted": 0, "models_deleted": 0}
+
+        try:
+            self._db.reset()
+            logger.info("WiFi positioning data reset.")
+            return {"fingerprints_deleted": True, "models_deleted": True}
+        except Exception as exc:
+            logger.error("Failed to reset wifipos data: %s", exc)
+            return {"error": str(exc)}
 
     # ------------------------------------------------------------------
     # Private helpers

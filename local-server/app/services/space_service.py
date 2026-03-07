@@ -26,14 +26,15 @@ class SpaceService:
         self._wifi_service = wifi_service
 
     def register_space(self, user_id: int, data: SpaceCreate) -> SpaceResponse:
-        """Register a new space using current WiFi environment data.
+        """Register a new space with walk-mode WiFi fingerprinting.
 
         This performs the full wifipos workflow:
-        1. Scan WiFi networks in the current environment.
-        2. Save the space with WiFi metadata.
-        3. Save the scan as a fingerprint in the wifipos database.
+        1. Collect multiple WiFi fingerprints with movement (walk mode).
+        2. Save the space with WiFi metadata from the first scan.
+        3. All fingerprints are saved in the wifipos database.
         4. Attempt to retrain the positioning model.
         """
+        # First scan for the space metadata
         wifi_metadata = self._wifi_service.scan_current_environment()
 
         space = self._space_repo.create(
@@ -43,8 +44,12 @@ class SpaceService:
             wifi_metadata=wifi_metadata,
         )
 
-        # Save fingerprint to wifipos database (like `wifipos learn`)
-        self._wifi_service.save_fingerprint(data.name, wifi_metadata)
+        # Walk-mode: collect multiple fingerprints (like `wifipos learn --walk`)
+        collection = self._wifi_service.collect_and_save_fingerprints(
+            location=data.name,
+            num_samples=data.samples,
+            interval=2.0,
+        )
 
         # Auto-train model if enough data (like `wifipos train`)
         training_result = self._wifi_service.try_train_model()
@@ -56,8 +61,12 @@ class SpaceService:
             )
 
         logger.info(
-            f"Space '{space.name}' registered for user {user_id} "
-            f"with {wifi_metadata.get('networks_detected', 0)} networks"
+            "Space '%s' registered for user %d — %d fingerprints saved, "
+            "%d networks in metadata",
+            space.name,
+            user_id,
+            collection["fingerprints_saved"],
+            wifi_metadata.get("networks_detected", 0),
         )
         return self._to_response(space)
 
@@ -75,6 +84,19 @@ class SpaceService:
                 detail="Space not found",
             )
         return self._to_response(space)
+
+    def reset_all(self) -> dict[str, Any]:
+        """Delete all spaces, fingerprints, and trained models."""
+        spaces_deleted = self._space_repo.delete_all()
+        wifi_reset = self._wifi_service.reset_wifi_data()
+        logger.info(
+            "Full reset: %d spaces deleted, wifi data reset.",
+            spaces_deleted,
+        )
+        return {
+            "spaces_deleted": spaces_deleted,
+            "wifi_reset": wifi_reset,
+        }
 
     @staticmethod
     def _to_response(space: Space) -> SpaceResponse:

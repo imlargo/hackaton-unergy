@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, instructions, spaces
+from app.api.routes import auth, instructions, spaces, tracking
 from app.core.config import settings
 from app.repositories.space_repository import SpaceRepository
 from app.repositories.user_repository import UserRepository
@@ -40,6 +40,7 @@ space_service = SpaceService(space_repo, wifi_service)
 auth.set_auth_service(auth_service)
 spaces.set_space_service(space_service)
 instructions.set_wifi_service(wifi_service)
+tracking.set_wifi_service(wifi_service)
 
 # ---------------------------------------------------------------------------
 # Create FastAPI app
@@ -68,6 +69,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(spaces.router)
 app.include_router(instructions.router)
+app.include_router(tracking.router)
 
 
 @app.get("/", tags=["health"])
