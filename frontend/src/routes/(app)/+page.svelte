@@ -17,7 +17,7 @@
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { spaceService } from '$lib/features/spaces/services/space';
 	import { instructionsService, type WifiStatus } from '$lib/features/instructions/services/instructions';
-	import { trackingService, type LocationPrediction, type TrackingStatus } from '$lib/features/tracking/services/tracking';
+	import { trackingService, type LocationPrediction, type TrackingStatus, type CollectionStatus, type WifiPosDiagnostics } from '$lib/features/tracking/services/tracking';
 	import type { Space, SpaceCreate } from '$lib/domain/models/space';
 
 	let spaces: Space[] = $state([]);
@@ -36,6 +36,11 @@
 	let trackingInterval = $state(3);
 	let lastUpdated: string | null = $state(null);
 	let predictionCount = $state(0);
+
+	// Model / system state
+	let modelReady = $state(false);
+	let collectingSpaces: Set<string> = $state(new Set());
+	let collectionPollInterval: ReturnType<typeof setInterval> | null = $state(null);
 
 	// Form state
 	let newName = $state('');
@@ -85,13 +90,29 @@
 	async function loadData() {
 		loading = true;
 		try {
-			const [spacesData, wifi, trackingStatus] = await Promise.all([
+			const [spacesData, wifi, trackingStatus, diag] = await Promise.all([
 				spaceService.list(),
 				instructionsService.getWifiStatus(),
 				trackingService.status(),
+				trackingService.diagnostics().catch(() => null),
 			]);
 			spaces = spacesData;
 			wifiStatus = wifi;
+
+			// Check if a trained model is available
+			if (diag) {
+				modelReady = !!diag.model_available;
+			}
+
+			// Check for spaces still collecting in background
+			for (const space of spacesData) {
+				if (space.registration_feedback?.collection_status === 'collecting') {
+					collectingSpaces.add(space.name);
+				}
+			}
+			if (collectingSpaces.size > 0) {
+				startCollectionPolling();
+			}
 
 			// Sync tracking state from backend
 			if (trackingStatus.active) {
@@ -208,8 +229,9 @@
 		}
 		creating = true;
 		try {
+			const spaceName = newName.trim();
 			const space = await spaceService.create({
-				name: newName.trim(),
+				name: spaceName,
 				space_type: newType,
 				samples: newSamples,
 			});
@@ -218,8 +240,11 @@
 			if (feedback) {
 				toast.success(
 					`Espacio "${space.name}" registrado ✔ ` +
-					`Recolectando ${feedback.samples_requested} muestras WiFi en segundo plano…`
+					`Recolectando ${feedback.samples_requested} muestras WiFi — ¡camina por el espacio!`
 				);
+				// Start polling collection status
+				collectingSpaces.add(spaceName);
+				startCollectionPolling();
 			} else {
 				toast.success(`Espacio "${space.name}" registrado exitosamente`);
 			}
@@ -235,12 +260,88 @@
 		}
 	}
 
+	// ------------------------------------------------------------------
+	// Collection status polling (after registering a space)
+	// ------------------------------------------------------------------
+
+	function startCollectionPolling() {
+		if (collectionPollInterval) return;
+		collectionPollInterval = setInterval(pollCollectionStatus, 3000);
+	}
+
+	function stopCollectionPolling() {
+		if (collectionPollInterval) {
+			clearInterval(collectionPollInterval);
+			collectionPollInterval = null;
+		}
+	}
+
+	async function pollCollectionStatus() {
+		const names = [...collectingSpaces];
+		if (names.length === 0) {
+			stopCollectionPolling();
+			return;
+		}
+
+		for (const name of names) {
+			try {
+				const cs = await trackingService.collectionStatus(name);
+				if (cs.status === 'done') {
+					collectingSpaces.delete(name);
+					collectingSpaces = new Set(collectingSpaces);
+
+					// Update space in list
+					const updatedSpace = spaces.find(s => s.name === name);
+					if (updatedSpace?.registration_feedback) {
+						updatedSpace.registration_feedback.collection_status = 'done';
+						if (cs.fingerprints_saved !== undefined) {
+							updatedSpace.registration_feedback.fingerprints_saved = cs.fingerprints_saved;
+						}
+						if (cs.model_trained) {
+							updatedSpace.registration_feedback.model_trained = true;
+							updatedSpace.registration_feedback.model_accuracy = cs.model_accuracy ?? undefined;
+						}
+						spaces = [...spaces]; // Trigger reactivity
+					}
+
+					if (cs.model_trained) {
+						modelReady = true;
+						toast.success(
+							`🎯 Modelo entrenado — precisión ${cs.model_accuracy ? Math.round(cs.model_accuracy * 100) + '%' : 'OK'}. ¡Ya puedes hacer tracking!`
+						);
+					} else {
+						toast.success(
+							`✅ Muestras de "${name}" recolectadas. Registra más espacios para entrenar el modelo.`
+						);
+					}
+				} else if (cs.status === 'error') {
+					collectingSpaces.delete(name);
+					collectingSpaces = new Set(collectingSpaces);
+
+					const updatedSpace = spaces.find(s => s.name === name);
+					if (updatedSpace?.registration_feedback) {
+						updatedSpace.registration_feedback.collection_status = 'error';
+						spaces = [...spaces];
+					}
+					toast.error(`Error recolectando muestras para "${name}"`);
+				}
+			} catch {
+				// Ignore polling errors
+			}
+		}
+
+		if (collectingSpaces.size === 0) {
+			stopCollectionPolling();
+		}
+	}
+
 	onMount(() => {
 		loadData();
 	});
 
 	onDestroy(() => {
 		stopPolling();
+		stopCollectionPolling();
 	});
 </script>
 
@@ -381,8 +482,22 @@
 											</span>
 										{/if}
 									</div>
-								{:else if currentLocation?.note}
-									<p class="mt-1 text-sm text-muted-foreground">{currentLocation.note}</p>
+								{:else if !modelReady && spaces.length >= 2}
+									<p class="mt-1 text-sm text-yellow-600">
+										⏳ El modelo se está entrenando con los datos recolectados…
+									</p>
+								{:else if !modelReady && spaces.length === 1}
+									<p class="mt-1 text-sm text-muted-foreground">
+										Registra al menos 2 espacios diferentes para activar la detección
+									</p>
+								{:else if !modelReady && spaces.length === 0}
+									<p class="mt-1 text-sm text-muted-foreground">
+										Registra espacios en diferentes habitaciones para comenzar
+									</p>
+								{:else if currentLocation?.location === 'unknown' && modelReady}
+									<p class="mt-1 text-sm text-yellow-600">
+										No se pudo determinar la ubicación — intenta moverte
+									</p>
 								{/if}
 							</div>
 						</div>
@@ -501,7 +616,15 @@
 
 						{#if spaces.length === 0}
 							<p class="max-w-48 text-center text-xs text-muted-foreground">
-								Registra al menos un espacio para habilitar el tracking
+								Registra al menos 2 espacios para empezar a detectar tu ubicación
+							</p>
+						{:else if spaces.length === 1 && !modelReady}
+							<p class="max-w-48 text-center text-xs text-yellow-600">
+								Falta 1 espacio más para entrenar el modelo
+							</p>
+						{:else if collectingSpaces.size > 0}
+							<p class="max-w-48 text-center text-xs text-muted-foreground">
+								📡 Recolectando muestras… camina por el espacio
 							</p>
 						{/if}
 					</div>
@@ -527,7 +650,9 @@
 									<MapPin class="size-3 {i === 0 ? 'text-green-500' : 'text-muted-foreground'}" />
 								</div>
 								<span class="flex-1 text-sm {i === 0 ? 'font-medium' : 'text-muted-foreground'}">
-									{entry.location === 'unknown' ? 'Desconocido' : entry.location}
+									{entry.location === 'unknown'
+										? (modelReady ? 'No determinado' : 'Sin modelo')
+										: entry.location}
 								</span>
 								<Badge variant={getConfidenceBadgeVariant(entry.confidence)} class="text-xs">
 									{formatConfidence(entry.confidence)}
@@ -546,7 +671,7 @@
 	<Separator />
 
 	<!-- WiFi Status -->
-	<div class="grid gap-4 sm:grid-cols-3">
+	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 		<Card.Root>
 			<Card.Header>
 				<div class="flex items-center gap-2">
@@ -594,6 +719,26 @@
 				</p>
 			</Card.Content>
 		</Card.Root>
+
+		<Card.Root>
+			<Card.Header>
+				<div class="flex items-center gap-2">
+					<Target class="size-4 text-muted-foreground" />
+					<Card.Title class="text-sm font-medium">Modelo ML</Card.Title>
+				</div>
+			</Card.Header>
+			<Card.Content>
+				{#if modelReady}
+					<Badge class="bg-green-600 text-white">Listo</Badge>
+				{:else if spaces.length >= 2}
+					<Badge variant="secondary">Entrenando…</Badge>
+				{:else if spaces.length === 1}
+					<Badge variant="outline">Falta 1 espacio</Badge>
+				{:else}
+					<Badge variant="outline">Sin datos</Badge>
+				{/if}
+			</Card.Content>
+		</Card.Root>
 	</div>
 
 	<!-- Spaces List -->
@@ -622,8 +767,9 @@
 				<Card.Content class="flex flex-col items-center justify-center py-12">
 					<MapPin class="mb-4 size-12 text-muted-foreground" />
 					<p class="text-lg font-medium">No hay espacios registrados</p>
-					<p class="mb-4 text-sm text-muted-foreground">
-						Registra tu primer espacio para comenzar el posicionamiento WiFi
+					<p class="mb-4 text-center text-sm text-muted-foreground">
+						Registra al menos 2 espacios (ej: cocina y sala) para comenzar
+						la detección automática de ubicación por WiFi
 					</p>
 					<Button onclick={() => (dialogOpen = true)}>
 						<Plus class="mr-2 size-4" />
@@ -670,11 +816,19 @@
 								{#if space.registration_feedback}
 									<div class="flex items-center gap-2">
 										{#if space.registration_feedback.collection_status === 'collecting'}
-											<span>📡 {space.registration_feedback.samples_requested} muestras · Recolectando…</span>
+											<span class="flex items-center gap-1">
+												<span class="relative flex size-2">
+													<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
+													<span class="relative inline-flex size-2 rounded-full bg-blue-500"></span>
+												</span>
+												📡 Recolectando {space.registration_feedback.samples_requested} muestras… ¡Camina!
+											</span>
 										{:else if space.registration_feedback.collection_status === 'error'}
 											<span>⚠️ Error en recolección</span>
+										{:else if space.registration_feedback.model_trained}
+											<span>✅ {space.registration_feedback.fingerprints_saved} muestras · Modelo entrenado{space.registration_feedback.model_accuracy ? ` (${Math.round(space.registration_feedback.model_accuracy * 100)}%)` : ''}</span>
 										{:else}
-											<span>📡 {space.registration_feedback.samples_requested} muestras · Completado</span>
+											<span>📡 {space.registration_feedback.fingerprints_saved} muestras recolectadas</span>
 										{/if}
 									</div>
 								{/if}
