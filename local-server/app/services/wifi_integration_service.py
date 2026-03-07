@@ -9,13 +9,19 @@ IMPORTANT: The ``wifi-positioning/`` directory and its contents must NEVER
 be modified.  This wrapper consumes it read-only.
 
 When the WiFi module is not available (e.g. in CI or environments without
-WiFi hardware), the service falls back to mock data so the rest of the
-backend can still be developed and tested.
+WiFi hardware), the service attempts a **native** WiFi scan using
+``nmcli`` or ``iwlist`` (Linux).  Only if that also fails does it fall
+back to mock data so the rest of the backend can still be developed and
+tested.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import re
+import shutil
+import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -36,8 +42,166 @@ try:
 except ImportError:
     logger.warning(
         "wifi-positioning module not available. "
-        "Using mock WiFi data for development."
+        "Will attempt native WiFi scanning."
     )
+
+
+# ---------------------------------------------------------------------------
+# Native Linux WiFi scanning (fallback when wifipos is not installed)
+# ---------------------------------------------------------------------------
+
+def _scan_nmcli() -> list[dict[str, Any]] | None:
+    """Scan WiFi networks via ``nmcli`` (NetworkManager CLI).
+
+    Returns a list of reading dicts or *None* if nmcli is unavailable.
+    """
+    if shutil.which("nmcli") is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "nmcli", "-t", "-f",
+                "BSSID,SSID,SIGNAL,CHAN",
+                "device", "wifi", "list", "--rescan", "yes",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode != 0:
+            logger.warning("nmcli scan failed: %s", result.stderr.strip())
+            return None
+
+        readings: list[dict[str, Any]] = []
+        for line in result.stdout.strip().splitlines():
+            if not line.strip():
+                continue
+            # nmcli escapes colons in BSSIDs as \:
+            parts = line.replace(r"\:", "##COLON##").split(":")
+            parts = [p.replace("##COLON##", ":") for p in parts]
+            if len(parts) < 4:
+                continue
+            bssid = parts[0].strip()
+            ssid = parts[1].strip()
+            try:
+                signal_pct = int(parts[2].strip())
+                channel = int(parts[3].strip())
+            except ValueError:
+                continue
+            # Approximate dBm conversion: 0% ≈ -100 dBm, 100% ≈ -30 dBm
+            rssi = int(-100 + signal_pct * 0.7)
+            readings.append({
+                "bssid": bssid,
+                "ssid": ssid,
+                "rssi": rssi,
+                "channel": channel,
+            })
+        return readings if readings else None
+    except Exception as exc:
+        logger.warning("nmcli scan error: %s", exc)
+        return None
+
+
+def _scan_iwlist() -> list[dict[str, Any]] | None:
+    """Scan WiFi networks via ``iwlist`` (wireless-tools).
+
+    Returns a list of reading dicts or *None* if iwlist is unavailable.
+    """
+    if shutil.which("iwlist") is None:
+        return None
+
+    # Determine the wireless interface
+    iface = _detect_wireless_iface()
+    if iface is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["iwlist", iface, "scan"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode != 0:
+            logger.warning("iwlist scan failed: %s", result.stderr.strip())
+            return None
+
+        readings: list[dict[str, Any]] = []
+        current: dict[str, Any] = {}
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("Cell"):
+                if current.get("bssid"):
+                    readings.append(current)
+                bssid_match = re.search(r"Address:\s*(\S+)", line)
+                current = {
+                    "bssid": bssid_match.group(1) if bssid_match else "",
+                    "ssid": "",
+                    "rssi": 0,
+                    "channel": 0,
+                }
+            elif "ESSID:" in line:
+                m = re.search(r'ESSID:"([^"]*)"', line)
+                if m:
+                    current["ssid"] = m.group(1)
+            elif "Signal level=" in line:
+                m = re.search(r"Signal level=(-?\d+)", line)
+                if m:
+                    current["rssi"] = int(m.group(1))
+            elif "Channel:" in line:
+                m = re.search(r"Channel:(\d+)", line)
+                if m:
+                    current["channel"] = int(m.group(1))
+        if current.get("bssid"):
+            readings.append(current)
+        return readings if readings else None
+    except Exception as exc:
+        logger.warning("iwlist scan error: %s", exc)
+        return None
+
+
+def _detect_wireless_iface() -> str | None:
+    """Return the first wireless interface name (e.g. wlan0, wlp2s0)."""
+    try:
+        result = subprocess.run(
+            ["iw", "dev"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Interface "):
+                return stripped.split()[1]
+    except Exception:
+        pass
+    # Fallback — check /sys/class/net
+    try:
+        for name in os.listdir("/sys/class/net"):
+            if name.startswith(("wlan", "wlp", "wlx")):
+                return name
+    except Exception:
+        pass
+    return None
+
+
+def _native_wifi_scan() -> dict[str, Any] | None:
+    """Attempt a native WiFi scan using system tools.
+
+    Returns a scan-result dict (same shape as ``_scan_real`` output)
+    or *None* if no scanner is available / no networks found.
+    """
+    readings = _scan_nmcli()
+    if readings is None:
+        readings = _scan_iwlist()
+    if readings is None:
+        return None
+    return {
+        "networks_detected": len(readings),
+        "readings": readings,
+        "source": "native_linux",
+    }
 
 
 class WiFiIntegrationService:
@@ -66,9 +230,23 @@ class WiFiIntegrationService:
         """Perform a WiFi scan and return a summary dict.
 
         The returned dict is stored as ``wifi_metadata`` on a Space.
+
+        Priority:
+        1. wifipos scanner (if installed and working)
+        2. Native Linux scan via nmcli / iwlist
+        3. Mock data (last resort — clearly flagged)
         """
         if self._scanner is not None:
             return self._scan_real()
+
+        native = _native_wifi_scan()
+        if native is not None:
+            logger.info(
+                "Native WiFi scan: %d networks detected.",
+                native["networks_detected"],
+            )
+            return native
+
         return self._scan_mock()
 
     def get_setup_instructions(self) -> list[dict[str, str]]:
@@ -173,6 +351,10 @@ class WiFiIntegrationService:
             }
         except Exception as exc:
             logger.error(f"WiFi scan failed: {exc}")
+            # Try native fallback before resorting to mock
+            native = _native_wifi_scan()
+            if native is not None:
+                return native
             return self._scan_mock()
 
     @staticmethod
