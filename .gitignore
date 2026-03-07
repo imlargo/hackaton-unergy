@@ -9,3 +9,7 @@ build/
 .pytest_cache/
 *.db
 .wifipos/
+venv/
+.venv/
+node_modules/
+local-server/data/
