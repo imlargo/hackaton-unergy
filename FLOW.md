@@ -4,6 +4,67 @@ Este documento describe cómo funciona el flujo de datos entre todos los compone
 
 ---
 
+## ¿Cómo funciona? — Resumen para el usuario
+
+### ¿Qué hace la app?
+
+Unergy permite **registrar espacios** (cocina, sala, oficina, etc.) usando señales WiFi como huella digital. Cada espacio en tu casa u oficina tiene un patrón único de redes WiFi cercanas — la app aprovecha esto para saber en qué habitación estás.
+
+### Flujo desde el punto de vista del usuario
+
+```
+📱 USUARIO
+    │
+    │ 1. Abre la app (http://localhost:5173)
+    │
+    │ 2. Va a la cocina y presiona "Registrar espacio"
+    │    → Escribe "Cocina" y selecciona tipo "kitchen"
+    │    → El sistema escanea las redes WiFi del entorno
+    │    → Guarda la "huella WiFi" de la cocina
+    │
+    │ 3. Va a la sala y registra otro espacio "Sala"
+    │    → Mismo proceso: escanea WiFi y guarda huella
+    │
+    │ 4. Después de registrar ≥2 espacios con ≥3 registros cada uno:
+    │    → El sistema AUTOMÁTICAMENTE entrena un modelo ML
+    │    → Ahora puede predecir en qué habitación estás
+    │
+    │ 5. Consulta "¿Dónde estoy?"
+    │    → El sistema escanea WiFi y compara con las huellas
+    │    → Responde: "Cocina (95% confianza)"
+    │
+    └─ Todos los datos se guardan en disco (JSON + SQLite)
+       → Sobreviven reinicios del servidor ✓
+```
+
+### ¿Qué pasa internamente cuando registras un espacio?
+
+1. **Escaneo WiFi** — Captura todas las redes cercanas (BSSID, SSID, señal, canal)
+2. **Guardar espacio** — Se guarda en `data/spaces.json` con los datos WiFi
+3. **Guardar huella** — Se guarda la huella WiFi en `data/wifipos.db` (SQLite) — esto es lo que el módulo `wifipos` llama "learn"
+4. **Auto-entrenar** — Si ya hay suficientes datos (≥2 ubicaciones con ≥3 huellas), entrena automáticamente un modelo de Machine Learning — esto es lo que `wifipos` llama "train"
+
+### ¿Cómo se usa el módulo `wifipos`?
+
+El módulo `wifi-positioning/` (que ya estaba en el repo) se copió a `local-server/wifipos/` para poder importarlo directamente. No hace falta instalarlo con pip. El servidor local lo usa así:
+
+| Operación | Equivale a CLI | Cuándo pasa |
+|-----------|----------------|-------------|
+| `save_fingerprint()` | `wifipos learn cocina` | Cada vez que registras un espacio |
+| `try_train_model()` | `wifipos train` | Automático si hay ≥2 ubicaciones con ≥3 huellas |
+| `get_current_location()` | `wifipos predict` | Cuando pides tu ubicación actual |
+
+### ¿Dónde se guardan los datos?
+
+| Dato | Archivo | Formato |
+|------|---------|---------|
+| Espacios registrados | `local-server/data/spaces.json` | JSON |
+| Huellas WiFi | `local-server/data/wifipos.db` | SQLite (tabla `fingerprints`) |
+| Modelo ML entrenado | `local-server/data/wifipos.db` | SQLite (tabla `models`, blob serializado) |
+| Usuarios | En memoria | Se pierde al reiniciar (mock) |
+
+---
+
 ## Diagrama general
 
 ```

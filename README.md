@@ -129,7 +129,7 @@ curl -X POST http://localhost:8000/auth/register \
 ## 🧪 Ejecutar tests
 
 ```bash
-# Tests del servidor local (27 tests: 17 endpoints + 10 persistencia/WiFi)
+# Tests del servidor local (34 tests: 17 endpoints + 17 persistencia/WiFi/training)
 cd local-server
 python -m pytest tests/ -v
 
@@ -245,8 +245,9 @@ wifipos track --interval 3
 |-----------|--------|---------------|
 | **Espacios** | ✅ Persistente | JSON en disco (`local-server/data/spaces.json`) — sobrevive reinicios |
 | **Datos WiFi** | ✅ Real | Captura real de redes cercanas (wifipos → nmcli → iwlist → mock como último recurso) |
+| **Huellas WiFi** | ✅ Persistente | SQLite (`data/wifipos.db`) — cada espacio guarda su huella WiFi |
+| **Modelo ML** | ✅ Auto-train | Se entrena automáticamente al tener ≥2 ubicaciones con ≥3 huellas cada una |
 | **Usuarios** | ⚠️ In-memory (`UserRepository`) | Se pierde al reiniciar — migrar a SQLAlchemy para producción |
-| **Predicción ubicación** | ⚠️ Placeholder | Retorna "unknown" sin modelo entrenado — entrenar con `wifipos train` |
 
 ### Cadena de escaneo WiFi
 

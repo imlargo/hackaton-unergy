@@ -36,7 +36,7 @@ hackaton-unergy/
 │   │   └── spaces.json          # Persistencia de espacios (creado automáticamente)
 │   └── tests/
 │       ├── test_api.py              # 17 tests (endpoints)
-│       └── test_persistence.py      # 10 tests (persistencia JSON, escaneo WiFi nativo)
+│       └── test_persistence.py      # 17 tests (persistencia JSON, escaneo WiFi, fingerprints, training)
 └── remote-server/           # Hub WebSocket en tiempo real
     ├── main.py              # Punto de entrada
     ├── requirements.txt     # Dependencias Python
@@ -77,7 +77,7 @@ uvicorn main:app --reload --port 8001
 ### Ejecutar tests
 
 ```bash
-# Tests del servidor local (27 tests: 17 endpoints + 10 persistencia/WiFi)
+# Tests del servidor local (34 tests: 17 endpoints + 17 persistencia/WiFi/training)
 cd local-server && python -m pytest tests/ -v
 
 # Tests del servidor remoto (4 tests)
@@ -201,8 +201,9 @@ El campo `source` en los resultados indica qué método se usó:
 |-----------|--------|---------------|
 | **Espacios** | ✅ Persistente | JSON en disco (`data/spaces.json`) — sobrevive reinicios |
 | **Datos WiFi** | ✅ Real | Guardados con cada espacio — escaneo real via wifipos/nmcli/iwlist |
+| **Huellas WiFi** | ✅ Persistente | SQLite (`data/wifipos.db`) — cada espacio guarda huella en tabla fingerprints |
+| **Modelo ML** | ✅ Auto-train | Se entrena automáticamente al tener ≥2 ubicaciones con ≥3 huellas |
 | **Usuarios** | ⚠️ In-memory | `UserRepository` — se pierde al reiniciar |
-| **Predicción ubicación** | ⚠️ Placeholder | Retorna "unknown" sin modelo entrenado |
 
 ### Migrar usuarios a persistencia real
 
