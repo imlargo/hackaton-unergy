@@ -153,7 +153,7 @@
 							bind:value={newSamples}
 						/>
 						<p class="text-xs text-muted-foreground">
-							{newSamples} muestras · Se recolectan en segundo plano (~{newSamples * 2}s)
+							{newSamples} muestras · Se recolectan en segundo plano
 						</p>
 					</div>
 				</div>
@@ -289,7 +289,13 @@
 								</div>
 								{#if space.registration_feedback}
 									<div class="flex items-center gap-2">
-										<span>📡 {space.registration_feedback.samples_requested} muestras · {space.registration_feedback.collection_status === 'collecting' ? 'Recolectando…' : 'Completado'}</span>
+										{#if space.registration_feedback.collection_status === 'collecting'}
+											<span>📡 {space.registration_feedback.samples_requested} muestras · Recolectando…</span>
+										{:else if space.registration_feedback.collection_status === 'error'}
+											<span>⚠️ Error en recolección</span>
+										{:else}
+											<span>📡 {space.registration_feedback.samples_requested} muestras · Completado</span>
+										{/if}
 									</div>
 								{/if}
 								<p class="text-xs">

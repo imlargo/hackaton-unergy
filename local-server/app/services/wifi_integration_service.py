@@ -542,10 +542,11 @@ class WiFiIntegrationService:
                 raw_data = [r.to_dict() for r in fp.readings]
                 self._db.save_fingerprint(location, raw_data, fp.timestamp)
                 saved_count += 1
-                logger.info(
-                    "  ▸ [walk] '%s' sample %d/%d saved (%d networks).",
-                    location, i, num_samples, len(raw_data),
-                )
+                if i % 5 == 0 or i == num_samples:
+                    logger.info(
+                        "  ▸ [walk] '%s' sample %d/%d saved (%d networks).",
+                        location, i, num_samples, len(raw_data),
+                    )
         else:
             # Fallback: take multiple scans using native/mock
             # Skip sleep for mock data (CI/testing) since there's no real
