@@ -1,17 +1,23 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { Wifi, Plus, MapPin, Radio, Home, Building, ChefHat, Warehouse, LayoutDashboard } from '@lucide/svelte';
+	import {
+		Wifi, Plus, MapPin, Radio, Home, Building, ChefHat, Warehouse,
+		LayoutDashboard, Navigation, Power, PowerOff, Activity, Target, Clock,
+		BarChart3, Eye, Zap,
+	} from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { Progress } from '$lib/components/ui/progress/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { spaceService } from '$lib/features/spaces/services/space';
 	import { instructionsService, type WifiStatus } from '$lib/features/instructions/services/instructions';
+	import { trackingService, type LocationPrediction, type TrackingStatus } from '$lib/features/tracking/services/tracking';
 	import type { Space, SpaceCreate } from '$lib/domain/models/space';
 
 	let spaces: Space[] = $state([]);
@@ -19,6 +25,17 @@
 	let loading = $state(true);
 	let creating = $state(false);
 	let dialogOpen = $state(false);
+
+	// Tracking state
+	let trackingActive = $state(false);
+	let trackingStarting = $state(false);
+	let trackingStopping = $state(false);
+	let currentLocation: LocationPrediction | null = $state(null);
+	let locationHistory: LocationPrediction[] = $state([]);
+	let pollInterval: ReturnType<typeof setInterval> | null = $state(null);
+	let trackingInterval = $state(3);
+	let lastUpdated: string | null = $state(null);
+	let predictionCount = $state(0);
 
 	// Form state
 	let newName = $state('');
@@ -41,20 +58,146 @@
 		return spaceTypes.find(t => t.value === type)?.label ?? type;
 	}
 
+	function getConfidenceColor(confidence: number): string {
+		if (confidence >= 0.8) return 'text-green-500';
+		if (confidence >= 0.5) return 'text-yellow-500';
+		return 'text-red-400';
+	}
+
+	function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' | 'outline' {
+		if (confidence >= 0.8) return 'default';
+		if (confidence >= 0.5) return 'secondary';
+		return 'outline';
+	}
+
+	function formatConfidence(confidence: number): string {
+		return `${Math.round(confidence * 100)}%`;
+	}
+
+	function formatTime(isoString: string): string {
+		return new Date(isoString).toLocaleTimeString('es-CO', {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+		});
+	}
+
 	async function loadData() {
 		loading = true;
 		try {
-			const [spacesData, wifi] = await Promise.all([
+			const [spacesData, wifi, trackingStatus] = await Promise.all([
 				spaceService.list(),
-				instructionsService.getWifiStatus()
+				instructionsService.getWifiStatus(),
+				trackingService.status(),
 			]);
 			spaces = spacesData;
 			wifiStatus = wifi;
+
+			// Sync tracking state from backend
+			if (trackingStatus.active) {
+				trackingActive = true;
+				if (trackingStatus.latest_prediction) {
+					currentLocation = trackingStatus.latest_prediction;
+				}
+				startPolling();
+			}
 		} catch (err) {
 			console.error('Error loading data:', err);
 			toast.error('Error al cargar datos del servidor');
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function startTracking() {
+		trackingStarting = true;
+		try {
+			const res = await trackingService.start(trackingInterval);
+			trackingActive = true;
+			predictionCount = 0;
+			locationHistory = [];
+			startPolling();
+			if (res.status === 'already_running') {
+				toast.info('El tracking ya estaba activo');
+			} else {
+				toast.success('📍 Tracking iniciado — monitoreando tu ubicación');
+			}
+		} catch (err) {
+			console.error('Error starting tracking:', err);
+			toast.error('No se pudo iniciar el tracking');
+		} finally {
+			trackingStarting = false;
+		}
+	}
+
+	async function stopTracking() {
+		trackingStopping = true;
+		try {
+			await trackingService.stop();
+			trackingActive = false;
+			stopPolling();
+			toast.success('Tracking detenido');
+		} catch (err) {
+			console.error('Error stopping tracking:', err);
+			toast.error('No se pudo detener el tracking');
+		} finally {
+			trackingStopping = false;
+		}
+	}
+
+	async function singlePredict() {
+		try {
+			const prediction = await trackingService.predictOnce();
+			currentLocation = prediction;
+			lastUpdated = new Date().toISOString();
+			predictionCount++;
+			addToHistory(prediction);
+		} catch (err) {
+			console.error('Error predicting location:', err);
+			toast.error('Error al predecir ubicación');
+		}
+	}
+
+	async function pollTrackingStatus() {
+		try {
+			const status = await trackingService.status();
+			if (!status.active) {
+				trackingActive = false;
+				stopPolling();
+				return;
+			}
+			if (status.latest_prediction) {
+				const newPrediction = status.latest_prediction;
+				const isNew = !currentLocation ||
+					newPrediction.timestamp !== currentLocation.timestamp;
+				if (isNew) {
+					currentLocation = newPrediction;
+					lastUpdated = newPrediction.timestamp ?? new Date().toISOString();
+					predictionCount++;
+					addToHistory(newPrediction);
+				}
+			}
+		} catch (err) {
+			console.error('Error polling tracking status:', err);
+		}
+	}
+
+	function addToHistory(prediction: LocationPrediction) {
+		locationHistory = [
+			{ ...prediction, timestamp: prediction.timestamp ?? new Date().toISOString() },
+			...locationHistory,
+		].slice(0, 20);
+	}
+
+	function startPolling() {
+		stopPolling();
+		pollInterval = setInterval(pollTrackingStatus, 2000);
+	}
+
+	function stopPolling() {
+		if (pollInterval) {
+			clearInterval(pollInterval);
+			pollInterval = null;
 		}
 	}
 
@@ -94,6 +237,10 @@
 
 	onMount(() => {
 		loadData();
+	});
+
+	onDestroy(() => {
+		stopPolling();
 	});
 </script>
 
@@ -173,6 +320,227 @@
 				</Dialog.Footer>
 			</Dialog.Content>
 		</Dialog.Root>
+	</div>
+
+	<Separator />
+
+	<!-- ========================== -->
+	<!-- LIVE TRACKING SECTION      -->
+	<!-- ========================== -->
+	<div class="space-y-4">
+		<div class="flex items-center gap-2">
+			<Navigation class="size-5" />
+			<h2 class="text-xl font-semibold">Ubicación en vivo</h2>
+			{#if trackingActive}
+				<span class="relative ml-2 flex size-3">
+					<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+					<span class="relative inline-flex size-3 rounded-full bg-green-500"></span>
+				</span>
+			{/if}
+		</div>
+
+		<!-- Main Tracking Card -->
+		<Card.Root class={trackingActive ? 'border-green-500/30 shadow-lg shadow-green-500/5' : ''}>
+			<Card.Content class="p-6">
+				<div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+					<!-- Current Location Display -->
+					<div class="flex-1 space-y-4">
+						<!-- Location Badge / Hero -->
+						<div class="flex items-center gap-4">
+							<div class={`flex size-16 items-center justify-center rounded-2xl ${trackingActive ? 'bg-green-500/10' : 'bg-muted'}`}>
+								{#if currentLocation && currentLocation.location !== 'unknown'}
+									{@const LocIcon = getSpaceIcon(
+										spaces.find(s => s.name === currentLocation?.location)?.space_type ?? ''
+									)}
+									<LocIcon class={`size-8 ${trackingActive ? 'text-green-500' : 'text-muted-foreground'}`} />
+								{:else}
+									<Target class={`size-8 ${trackingActive ? 'text-green-500 animate-pulse' : 'text-muted-foreground'}`} />
+								{/if}
+							</div>
+							<div>
+								<p class="text-sm text-muted-foreground">
+									{trackingActive ? 'Estás en' : 'Última ubicación'}
+								</p>
+								<p class="text-3xl font-bold tracking-tight">
+									{#if currentLocation && currentLocation.location !== 'unknown'}
+										{currentLocation.location}
+									{:else if trackingActive}
+										Detectando...
+									{:else}
+										—
+									{/if}
+								</p>
+								{#if currentLocation && currentLocation.location !== 'unknown'}
+									<div class="mt-1 flex items-center gap-2">
+										<span class={`text-sm font-medium ${getConfidenceColor(currentLocation.confidence)}`}>
+											{formatConfidence(currentLocation.confidence)} confianza
+										</span>
+										{#if lastUpdated}
+											<span class="text-xs text-muted-foreground">
+												· {formatTime(lastUpdated)}
+											</span>
+										{/if}
+									</div>
+								{:else if currentLocation?.note}
+									<p class="mt-1 text-sm text-muted-foreground">{currentLocation.note}</p>
+								{/if}
+							</div>
+						</div>
+
+						<!-- Confidence Bar -->
+						{#if currentLocation && currentLocation.location !== 'unknown'}
+							<div class="space-y-2">
+								<div class="flex items-center justify-between text-sm">
+									<span class="text-muted-foreground">Confianza</span>
+									<span class="font-medium">{formatConfidence(currentLocation.confidence)}</span>
+								</div>
+								<Progress value={currentLocation.confidence * 100} max={100} />
+							</div>
+						{/if}
+
+						<!-- Location Probabilities -->
+						{#if currentLocation?.probabilities && Object.keys(currentLocation.probabilities).length > 0}
+							<div class="space-y-2">
+								<p class="text-sm font-medium text-muted-foreground">Probabilidades por espacio</p>
+								<div class="space-y-1.5">
+									{#each Object.entries(currentLocation.probabilities).sort((a, b) => b[1] - a[1]) as [loc, prob]}
+										<div class="flex items-center gap-3">
+											<span class="w-24 truncate text-sm">{loc}</span>
+											<div class="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+												<div
+													class="h-full rounded-full bg-primary/60 transition-all duration-500"
+													style="width: {prob * 100}%"
+												></div>
+											</div>
+											<span class="w-12 text-right text-xs text-muted-foreground">
+												{formatConfidence(prob)}
+											</span>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
+
+					<!-- Tracking Controls -->
+					<div class="flex flex-col items-center gap-3 lg:items-end">
+						{#if !trackingActive}
+							<Button
+								size="lg"
+								class="gap-2 bg-green-600 text-white hover:bg-green-700"
+								onclick={startTracking}
+								disabled={trackingStarting || spaces.length === 0}
+							>
+								{#if trackingStarting}
+									<Activity class="size-5 animate-spin" />
+									Iniciando...
+								{:else}
+									<Power class="size-5" />
+									Iniciar tracking
+								{/if}
+							</Button>
+						{:else}
+							<Button
+								size="lg"
+								variant="destructive"
+								class="gap-2"
+								onclick={stopTracking}
+								disabled={trackingStopping}
+							>
+								{#if trackingStopping}
+									<Activity class="size-5 animate-spin" />
+									Deteniendo...
+								{:else}
+									<PowerOff class="size-5" />
+									Detener tracking
+								{/if}
+							</Button>
+						{/if}
+
+						<Button
+							variant="outline"
+							size="sm"
+							class="gap-2"
+							onclick={singlePredict}
+						>
+							<Eye class="size-4" />
+							Detectar ahora
+						</Button>
+
+						<!-- Interval selector -->
+						{#if !trackingActive}
+							<div class="flex items-center gap-2 text-sm text-muted-foreground">
+								<Clock class="size-3.5" />
+								<span>Cada</span>
+								<select
+									bind:value={trackingInterval}
+									class="rounded border border-input bg-background px-2 py-0.5 text-sm"
+								>
+									<option value={1}>1s</option>
+									<option value={2}>2s</option>
+									<option value={3}>3s</option>
+									<option value={5}>5s</option>
+									<option value={10}>10s</option>
+								</select>
+							</div>
+						{/if}
+
+						<!-- Tracking stats -->
+						{#if trackingActive}
+							<div class="flex items-center gap-3 text-xs text-muted-foreground">
+								<div class="flex items-center gap-1">
+									<Zap class="size-3" />
+									<span>{predictionCount} lecturas</span>
+								</div>
+								<div class="flex items-center gap-1">
+									<BarChart3 class="size-3" />
+									<span>~{trackingInterval}s intervalo</span>
+								</div>
+							</div>
+						{/if}
+
+						{#if spaces.length === 0}
+							<p class="max-w-48 text-center text-xs text-muted-foreground">
+								Registra al menos un espacio para habilitar el tracking
+							</p>
+						{/if}
+					</div>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<!-- Location History Timeline -->
+		{#if locationHistory.length > 0}
+			<Card.Root>
+				<Card.Header>
+					<div class="flex items-center gap-2">
+						<Activity class="size-4 text-muted-foreground" />
+						<Card.Title class="text-sm font-medium">Historial reciente</Card.Title>
+						<Badge variant="secondary">{locationHistory.length}</Badge>
+					</div>
+				</Card.Header>
+				<Card.Content>
+					<div class="max-h-48 space-y-1 overflow-y-auto">
+						{#each locationHistory as entry, i}
+							<div class="flex items-center gap-3 rounded-md px-2 py-1.5 {i === 0 ? 'bg-muted/50' : ''}">
+								<div class="flex size-6 items-center justify-center rounded-full {i === 0 ? 'bg-green-500/20' : 'bg-muted'}">
+									<MapPin class="size-3 {i === 0 ? 'text-green-500' : 'text-muted-foreground'}" />
+								</div>
+								<span class="flex-1 text-sm {i === 0 ? 'font-medium' : 'text-muted-foreground'}">
+									{entry.location === 'unknown' ? 'Desconocido' : entry.location}
+								</span>
+								<Badge variant={getConfidenceBadgeVariant(entry.confidence)} class="text-xs">
+									{formatConfidence(entry.confidence)}
+								</Badge>
+								{#if entry.timestamp}
+									<span class="text-xs text-muted-foreground">{formatTime(entry.timestamp)}</span>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				</Card.Content>
+			</Card.Root>
+		{/if}
 	</div>
 
 	<Separator />
@@ -267,14 +635,26 @@
 			<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				{#each spaces as space}
 					{@const Icon = getSpaceIcon(space.space_type)}
-					<Card.Root>
+					{@const isCurrentSpace = trackingActive && currentLocation?.location === space.name}
+					<Card.Root class={isCurrentSpace ? 'border-green-500/50 ring-1 ring-green-500/20' : ''}>
 						<Card.Header>
 							<div class="flex items-center justify-between">
 								<div class="flex items-center gap-2">
-									<Icon class="size-5 text-muted-foreground" />
+									<Icon class="size-5 {isCurrentSpace ? 'text-green-500' : 'text-muted-foreground'}" />
 									<Card.Title>{space.name}</Card.Title>
 								</div>
-								<Badge variant="secondary">{getSpaceLabel(space.space_type)}</Badge>
+								<div class="flex items-center gap-1.5">
+									{#if isCurrentSpace}
+										<Badge class="gap-1 bg-green-600 text-white">
+											<span class="relative flex size-2">
+												<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75"></span>
+												<span class="relative inline-flex size-2 rounded-full bg-white"></span>
+											</span>
+											Aquí
+										</Badge>
+									{/if}
+									<Badge variant="secondary">{getSpaceLabel(space.space_type)}</Badge>
+								</div>
 							</div>
 						</Card.Header>
 						<Card.Content>
