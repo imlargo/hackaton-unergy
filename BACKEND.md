@@ -6,7 +6,7 @@ Plataforma de contexto energético y posicionamiento espacial. Esta arquitectura
 
 ```
 hackaton-unergy/
-├── wifi-positioning/        # Módulo WiFi existente (CONGELADO — no modificar)
+├── wifi-positioning/        # Módulo WiFi original (referencia)
 ├── frontend/                # Aplicación SvelteKit
 ├── local-server/            # Backend principal (FastAPI)
 │   ├── main.py              # Punto de entrada
@@ -31,6 +31,7 @@ hackaton-unergy/
 │   │       ├── auth.py              # POST /auth/register, /auth/login, GET /auth/me
 │   │       ├── spaces.py            # POST /spaces, GET /spaces, GET /spaces/{id}
 │   │       └── instructions.py      # GET /instructions/register-space, /instructions/wifi-status
+│   ├── wifipos/                 # Copia del módulo wifi-positioning (scanner, model, storage)
 │   ├── data/
 │   │   └── spaces.json          # Persistencia de espacios (creado automáticamente)
 │   └── tests/
@@ -164,23 +165,27 @@ export const REALTIME_WS_URL = 'ws://localhost:8001/ws';
 
 ## Integración con wifi-positioning/
 
-El módulo `wifi-positioning/` **no se modifica**. Se consume externamente a través de `wifi_integration_service.py`:
+El módulo `wifi-positioning/` se copia directamente en `local-server/wifipos/` para que pueda ser importado sin necesidad de instalación separada:
 
 ```
-wifi-positioning/          ← Módulo congelado (solo lectura)
+wifi-positioning/          ← Módulo original (referencia)
     └── src/wifipos/
         ├── scanner/       ← WifiScanner, WifiReading
         ├── model/         ← Predictor, Fingerprint
         └── storage/       ← Database
 
 local-server/
+    ├── wifipos/           ← Copia del módulo (importable directamente)
+    │   ├── scanner/
+    │   ├── model/
+    │   └── storage/
     └── app/services/
         └── wifi_integration_service.py  ← Wrapper/adaptador
 ```
 
-El servicio `WiFiIntegrationService` tiene una **cadena de escaneo con fallback**:
+El servicio `WiFiIntegrationService` importa directamente desde `wifipos` (la copia local) y tiene una **cadena de escaneo con fallback**:
 
-1. **wifipos scanner** — si el paquete está instalado (`pip install -e wifi-positioning/`)
+1. **wifipos scanner** — el módulo copiado localmente (scanner, predictor, database)
 2. **nmcli nativo** — escaneo directo via NetworkManager (Linux)
 3. **iwlist nativo** — escaneo directo via wireless-tools (Linux)
 4. **Mock data** — último recurso para CI/testing sin WiFi
@@ -189,11 +194,6 @@ El campo `source` en los resultados indica qué método se usó:
 - `"wifipos_scanner"` → módulo completo
 - `"native_linux"` → nmcli o iwlist
 - `"mock"` → datos de prueba
-
-Para usar el módulo completo:
-```bash
-pip install -e wifi-positioning/
-```
 
 ## Estado actual de la persistencia y datos
 
