@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, hub, instructions, model, spaces, tracking
+from app.api.routes import auth, consumption, hub, instructions, model, spaces, tracking
 from app.core.config import settings
 from app.repositories.space_repository import SpaceRepository
 from app.repositories.user_repository import UserRepository
@@ -73,6 +73,7 @@ app.include_router(instructions.router)
 app.include_router(tracking.router)
 app.include_router(hub.router)
 app.include_router(model.router)
+app.include_router(consumption.router)
 
 
 @app.get("/", tags=["health"])
