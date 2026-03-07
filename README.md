@@ -40,15 +40,25 @@ cd hackaton-unergy
 ### Paso 2: Instalar dependencias del backend
 
 ```bash
-# Dependencias del servidor local
-pip install -r local-server/requirements.txt
+# Dependencias del servidor local (INCLUYE scikit-learn, joblib, numpy para wifipos)
+cd local-server
+pip install -r requirements.txt
+cd ..
 
 # Dependencias del servidor remoto
 pip install -r remote-server/requirements.txt
-
-# (Opcional) Módulo de posicionamiento WiFi — para escaneo real
-pip install -e wifi-positioning/
 ```
+
+> ⚠️ **Importante:** `pip install -r local-server/requirements.txt` instala **todo** lo necesario
+> para que el módulo de posicionamiento WiFi funcione (joblib, scikit-learn, numpy).
+> No es necesario instalar `wifi-positioning/` por separado — ya está copiado
+> dentro de `local-server/wifipos/`.
+>
+> Si ves el error `wifipos database not available — fingerprint not saved`,
+> significa que las dependencias no están instaladas. Revisa con:
+> ```bash
+> curl http://localhost:8000/health/wifipos
+> ```
 
 ### Paso 3: Instalar dependencias del frontend
 

@@ -60,6 +60,24 @@ class SpaceService:
                 training_result["accuracy"],
             )
 
+        # Build registration feedback for the API response
+        feedback: dict[str, Any] = {
+            "fingerprints_saved": collection["fingerprints_saved"],
+            "samples_requested": collection["samples_requested"],
+            "wifi_source": wifi_metadata.get("source", "unknown"),
+            "networks_detected": wifi_metadata.get("networks_detected", 0),
+        }
+        if training_result:
+            feedback["model_trained"] = True
+            feedback["model_accuracy"] = training_result["accuracy"]
+            feedback["model_locations"] = training_result["locations"]
+        else:
+            feedback["model_trained"] = False
+            feedback["model_note"] = (
+                "Need >=2 locations with >=3 fingerprints each to train. "
+                "Register more spaces!"
+            )
+
         logger.info(
             "Space '%s' registered for user %d — %d fingerprints saved, "
             "%d networks in metadata",
@@ -68,7 +86,7 @@ class SpaceService:
             collection["fingerprints_saved"],
             wifi_metadata.get("networks_detected", 0),
         )
-        return self._to_response(space)
+        return self._to_response(space, feedback=feedback)
 
     def list_spaces(self, user_id: int) -> list[SpaceResponse]:
         """List all spaces belonging to a user."""
@@ -99,7 +117,7 @@ class SpaceService:
         }
 
     @staticmethod
-    def _to_response(space: Space) -> SpaceResponse:
+    def _to_response(space: Space, feedback: dict[str, Any] | None = None) -> SpaceResponse:
         return SpaceResponse(
             id=space.id,
             user_id=space.user_id,
@@ -107,4 +125,5 @@ class SpaceService:
             space_type=space.space_type,
             wifi_metadata=space.wifi_metadata,
             created_at=space.created_at,
+            registration_feedback=feedback,
         )

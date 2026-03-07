@@ -89,6 +89,7 @@ cd remote-server && python -m pytest tests/ -v
 | Método | Ruta | Auth | Descripción |
 |--------|------|------|-------------|
 | `GET` | `/` | No | Health check |
+| `GET` | `/health/wifipos` | No | **Diagnóstico** del módulo WiFi (deps, DB, modelo) |
 | `POST` | `/auth/register` | No | Registrar usuario |
 | `POST` | `/auth/login` | No | Iniciar sesión |
 | `GET` | `/auth/me` | Sí | Obtener usuario actual |
@@ -254,3 +255,40 @@ Los modelos de dominio para estas entidades ya están definidos como placeholder
 - **Alert** — Notificaciones por consumo alto, huella de carbono, etc.
 
 Solo falta crear sus repositorios, servicios y rutas cuando se necesiten.
+
+## Troubleshooting
+
+### Error: `wifipos database not available — fingerprint not saved`
+
+Esto significa que las dependencias de Python para el módulo de posicionamiento WiFi no están instaladas. El servidor funciona sin ellas (usa datos mock), pero las huellas WiFi no se guardan.
+
+**Solución:**
+```bash
+cd local-server
+pip install -r requirements.txt
+```
+
+**Diagnóstico:** Visita `http://localhost:8000/health/wifipos` para ver el estado completo:
+```bash
+curl http://localhost:8000/health/wifipos | python -m json.tool
+```
+
+Ejemplo de respuesta saludable:
+```json
+{
+  "wifipos_available": true,
+  "database_initialized": true,
+  "scanner_initialized": false,
+  "tracking_active": false,
+  "dependencies": {
+    "joblib": "installed",
+    "sklearn": "installed",
+    "numpy": "installed"
+  },
+  "fingerprint_locations": {"Cocina": 20, "Sala": 20},
+  "total_fingerprints": 40,
+  "model_available": true
+}
+```
+
+Si `wifipos_available` es `false`, el campo `import_error` indica qué falta.

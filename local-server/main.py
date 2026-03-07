@@ -81,3 +81,14 @@ def health_check():
         "status": "running",
         "remote_server": settings.REMOTE_SERVER_URL,
     }
+
+
+@app.get("/health/wifipos", tags=["health"])
+def wifipos_diagnostics():
+    """Diagnostics for the wifi-positioning sub-system.
+
+    Returns details on whether the wifipos module is available,
+    which dependencies are installed, scanner/DB status, and
+    fingerprint/model counts.  Useful for debugging setup issues.
+    """
+    return wifi_service.get_diagnostics()

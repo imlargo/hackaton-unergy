@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Try to import from the wifipos package (copied into local-server/wifipos/)
 # ---------------------------------------------------------------------------
 _WIFIPOS_AVAILABLE = False
+_WIFIPOS_IMPORT_ERROR: str | None = None
 
 try:
     from wifipos.model.predictor import Predictor  # noqa: F401
@@ -45,10 +46,13 @@ try:
 
     _WIFIPOS_AVAILABLE = True
     logger.info("wifi-positioning module loaded successfully.")
-except ImportError:
+except ImportError as exc:
+    _WIFIPOS_IMPORT_ERROR = str(exc)
     logger.warning(
-        "wifi-positioning module not available. "
-        "Will attempt native WiFi scanning."
+        "wifi-positioning module not available: %s. "
+        "Fingerprints will NOT be saved. "
+        "Fix: cd local-server && pip install -r requirements.txt",
+        exc,
     )
 
 # Default wifipos database path: local-server/data/wifipos.db
@@ -255,6 +259,49 @@ class WiFiIntegrationService:
     # Public API
     # ------------------------------------------------------------------
 
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Return a diagnostics dict showing the health of all wifipos sub-systems.
+
+        Useful for debugging setup issues — exposed via ``GET /health/wifipos``.
+        """
+        diag: dict[str, Any] = {
+            "wifipos_available": _WIFIPOS_AVAILABLE,
+            "database_initialized": self._db is not None,
+            "scanner_initialized": self._scanner is not None,
+            "tracking_active": self._tracking_active,
+        }
+
+        if _WIFIPOS_IMPORT_ERROR:
+            diag["import_error"] = _WIFIPOS_IMPORT_ERROR
+            diag["fix"] = "cd local-server && pip install -r requirements.txt"
+
+        # Check individual deps
+        deps = {}
+        for mod_name in ("joblib", "sklearn", "numpy"):
+            try:
+                __import__(mod_name)
+                deps[mod_name] = "installed"
+            except ImportError:
+                deps[mod_name] = "MISSING"
+        diag["dependencies"] = deps
+
+        if self._db is not None:
+            try:
+                counts = self._db.get_fingerprint_count_by_location()
+                diag["fingerprint_locations"] = dict(counts)
+                diag["total_fingerprints"] = sum(counts.values())
+            except Exception:
+                diag["fingerprint_locations"] = {}
+                diag["total_fingerprints"] = 0
+
+            try:
+                model = self._db.load_latest_model()
+                diag["model_available"] = model is not None
+            except Exception:
+                diag["model_available"] = False
+
+        return diag
+
     def scan_current_environment(self) -> dict[str, Any]:
         """Perform a WiFi scan and return a summary dict.
 
@@ -293,7 +340,18 @@ class WiFiIntegrationService:
             True if the fingerprint was saved, False otherwise.
         """
         if self._db is None:
-            logger.warning("wifipos database not available — fingerprint not saved.")
+            if _WIFIPOS_IMPORT_ERROR:
+                logger.warning(
+                    "wifipos database not available — fingerprint not saved "
+                    "(import error: %s). "
+                    "Fix: cd local-server && pip install -r requirements.txt",
+                    _WIFIPOS_IMPORT_ERROR,
+                )
+            else:
+                logger.warning(
+                    "wifipos database not available — fingerprint not saved. "
+                    "Fix: cd local-server && pip install -r requirements.txt",
+                )
             return False
 
         readings = wifi_metadata.get("readings", [])

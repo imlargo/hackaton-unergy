@@ -45,6 +45,19 @@ class TestHealth:
         assert body["status"] == "running"
         assert "version" in body
 
+    def test_wifipos_diagnostics(self, client):
+        """GET /health/wifipos returns detailed wifipos status."""
+        resp = client.get("/health/wifipos")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "wifipos_available" in body
+        assert "database_initialized" in body
+        assert "scanner_initialized" in body
+        assert "dependencies" in body
+        # Each dependency should report installed or MISSING
+        for dep in ("joblib", "sklearn", "numpy"):
+            assert dep in body["dependencies"]
+
 
 # ── Auth ──────────────────────────────────────────────────────────────
 
@@ -181,6 +194,20 @@ class TestSpaces:
         assert body["space_type"] == "kitchen"
         assert "wifi_metadata" in body
         assert body["wifi_metadata"]["networks_detected"] >= 1
+
+    def test_register_space_includes_feedback(self, client):
+        """Registration response includes feedback about fingerprints/model."""
+        resp = client.post(
+            "/spaces",
+            json={"name": "FeedbackTest", "space_type": "room", "samples": 1},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        feedback = body.get("registration_feedback")
+        assert feedback is not None
+        assert "fingerprints_saved" in feedback
+        assert "wifi_source" in feedback
+        assert "model_trained" in feedback
 
     def test_list_spaces(self, client):
         # Register two spaces

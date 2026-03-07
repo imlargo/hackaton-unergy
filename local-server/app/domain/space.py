@@ -36,3 +36,4 @@ class SpaceResponse(BaseModel):
     space_type: str
     wifi_metadata: dict[str, Any]
     created_at: datetime
+    registration_feedback: dict[str, Any] | None = None
