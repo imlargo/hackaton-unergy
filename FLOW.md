@@ -38,7 +38,7 @@ Este documento describe cómo funciona el flujo de datos entre todos los compone
 
 ## Flujo 1: Registrar un espacio nuevo
 
-Este es el flujo principal. El usuario crea un espacio y el sistema captura automáticamente la información WiFi del entorno.
+Este es el flujo principal. El usuario crea un espacio y el sistema captura automáticamente la información WiFi del entorno, **guarda la huella WiFi** en la base de datos de wifipos, y **entrena automáticamente** el modelo de posicionamiento.
 
 ### Paso a paso:
 
@@ -59,19 +59,24 @@ USUARIO                  FRONTEND                    LOCAL SERVER
   │                        │                            │
   │                        │                    ┌───────┤
   │                        │                    │ 1. SpaceService.register_space()
-  │                        │                    │ 2. WiFiIntegrationService
-  │                        │                    │    .scan_current_environment()
-  │                        │                    │    ↓
-  │                        │                    │    Intenta wifipos scanner
-  │                        │                    │    ↓ (si falla)
-  │                        │                    │    Intenta nmcli (Linux)
-  │                        │                    │    ↓ (si falla)
-  │                        │                    │    Intenta iwlist (Linux)
-  │                        │                    │    ↓ (si falla)
-  │                        │                    │    Usa datos mock
+  │                        │                    │
+  │                        │                    │ 2. WiFi scan (cadena de fallback):
+  │                        │                    │    wifipos scanner → nmcli
+  │                        │                    │    → iwlist → mock
   │                        │                    │
   │                        │                    │ 3. SpaceRepository.create()
   │                        │                    │    → Guarda en data/spaces.json
+  │                        │                    │
+  │                        │                    │ 4. save_fingerprint()
+  │                        │                    │    → Guarda huella WiFi en
+  │                        │                    │      data/wifipos.db (SQLite)
+  │                        │                    │    (equivale a `wifipos learn`)
+  │                        │                    │
+  │                        │                    │ 5. try_train_model()
+  │                        │                    │    Si hay ≥2 ubicaciones con
+  │                        │                    │    ≥3 huellas cada una:
+  │                        │                    │    → Entrena modelo ML
+  │                        │                    │    (equivale a `wifipos train`)
   │                        │                    └───────┤
   │                        │                            │
   │                        │ ←──────────────────────────│
@@ -95,15 +100,47 @@ USUARIO                  FRONTEND                    LOCAL SERVER
 
 | Prioridad | Método | Cuándo se usa | Datos |
 |-----------|--------|--------------|-------|
-| 1° | `wifipos` scanner | Cuando `pip install -e wifi-positioning/` está instalado | BSSID, SSID, RSSI (dBm), Channel — escaneo nativo de la plataforma (macOS CoreWLAN, Linux nmcli) |
-| 2° | `nmcli` nativo | Linux con NetworkManager, sin wifipos | Mismos campos, conversión signal% → dBm |
+| 1° | `wifipos` scanner | Módulo copiado en `local-server/wifipos/` | BSSID, SSID, RSSI (dBm), Channel — escaneo nativo de la plataforma (macOS CoreWLAN, Linux nmcli) |
+| 2° | `nmcli` nativo | Linux con NetworkManager, sin scanner disponible | Mismos campos, conversión signal% → dBm |
 | 3° | `iwlist` nativo | Linux con wireless-tools, sin nmcli | Parseo de salida iwlist |
 | 4° | Mock data | CI/testing, sin WiFi hardware | 3 redes ficticias con `source: "mock"` |
 
 El campo `source` en `wifi_metadata` siempre indica qué método se usó:
-- `"wifipos_scanner"` — módulo completo instalado
+- `"wifipos_scanner"` — módulo completo
 - `"native_linux"` — nmcli o iwlist directo
 - `"mock"` — datos de prueba
+
+### Flujo de datos wifipos (learn → train → predict):
+
+```
+POST /spaces → scan WiFi → guardar espacio
+                    │
+                    ▼
+         save_fingerprint()              ← equivale a `wifipos learn`
+         → INSERT INTO fingerprints      (SQLite: data/wifipos.db)
+                    │
+                    ▼
+         try_train_model()               ← equivale a `wifipos train`
+         ├── ¿≥2 ubicaciones con ≥3 huellas?
+         │   ├── NO → skip (aún no hay suficientes datos)
+         │   └── SÍ → Entrenar modelo ML:
+         │       1. augment_fingerprints (ruido ±3 dB)
+         │       2. build_feature_matrix (BSSIDs → columnas)
+         │       3. Probar RandomForest, KNN, GradientBoosting
+         │       4. Seleccionar mejor por cross-validation
+         │       5. Serializar con joblib → BLOB
+         │       6. INSERT INTO models (SQLite)
+         └────────────────────────────────────────
+
+GET /current-location (futuro)
+         │
+         ▼
+  Predictor.predict(scanner)
+  1. scan_averaged(3 escaneos)
+  2. Construir vector de features
+  3. pipeline.predict_proba()
+  4. → { location: "Cocina", confidence: 0.95 }
+```
 
 ---
 
@@ -185,11 +222,20 @@ SpaceRepository.__init__()
     │   ├── SÍ → Carga espacios y next_id desde el archivo
     │   └── NO → Inicia vacío (next_id=1, spaces={})
     │
+WiFiIntegrationService.__init__()
+    │
+    ├── Abre/crea data/wifipos.db (SQLite)
+    │   → Tabla fingerprints (huellas WiFi)
+    │   → Tabla models (modelos ML entrenados)
+    │
     ▼
 Servidor corriendo...
     │
-    ├── POST /spaces → SpaceRepository.create()
-    │   └── Agrega espacio → _save() → Escribe JSON a disco
+    ├── POST /spaces → SpaceService.register_space()
+    │   ├── Escanea WiFi
+    │   ├── Guarda espacio → data/spaces.json
+    │   ├── Guarda huella → data/wifipos.db (fingerprints)
+    │   └── Intenta entrenar modelo → data/wifipos.db (models)
     │
     ├── DELETE /spaces/{id} → SpaceRepository.delete()
     │   └── Elimina espacio → _save() → Escribe JSON a disco
@@ -200,7 +246,10 @@ Servidor corriendo...
 Servidor se reinicia
     │
     ▼
-Los datos persisten ✓ (se recargan del archivo JSON)
+Todos los datos persisten ✓
+    ├── Espacios (data/spaces.json)
+    ├── Huellas WiFi (data/wifipos.db)
+    └── Modelo ML entrenado (data/wifipos.db)
 ```
 
 ---
@@ -258,9 +307,10 @@ FRONTEND A                 REMOTE SERVER              FRONTEND B
 | Componente | Estado | Persistencia | WiFi |
 |-----------|--------|-------------|------|
 | **Espacios** | ✅ Real | JSON en disco (`data/spaces.json`) | Datos WiFi reales guardados con cada espacio |
+| **Huellas WiFi** | ✅ Real | SQLite (`data/wifipos.db`) | Cada registro guarda huella en la DB de wifipos |
+| **Modelo ML** | ✅ Auto-train | SQLite (`data/wifipos.db`) | Se entrena automáticamente al tener ≥2 ubicaciones con ≥3 huellas |
 | **WiFi scan** | ✅ Real | N/A | wifipos → nmcli → iwlist → mock |
 | **Usuarios** | ⚠️ Mock | In-memory | N/A |
-| **Predicción ubicación** | ⚠️ Placeholder | SQLite (`~/.wifipos/wifipos.db`) | Requiere entrenar modelo con `wifipos train` |
 
 ---
 
@@ -280,9 +330,10 @@ uvicorn main:app --reload --port 8001
 # Terminal 3: Frontend
 cd frontend
 pnpm install && pnpm dev
-
-# (Opcional) Para WiFi real con el módulo completo:
-pip install -e wifi-positioning/
 ```
 
-Abrir **http://localhost:5173** y registrar un espacio. Los datos WiFi reales se capturan y se guardan localmente en `data/spaces.json`.
+Abrir **http://localhost:5173** y registrar espacios. Por cada espacio:
+1. Se capturan las redes WiFi del entorno
+2. Se guarda la huella WiFi en `data/wifipos.db`
+3. Cuando hay ≥2 ubicaciones con ≥3 registros, el modelo se entrena automáticamente
+4. El modelo entrenado permite predecir la ubicación actual

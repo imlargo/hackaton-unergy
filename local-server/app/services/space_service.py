@@ -26,7 +26,14 @@ class SpaceService:
         self._wifi_service = wifi_service
 
     def register_space(self, user_id: int, data: SpaceCreate) -> SpaceResponse:
-        """Register a new space using current WiFi environment data."""
+        """Register a new space using current WiFi environment data.
+
+        This performs the full wifipos workflow:
+        1. Scan WiFi networks in the current environment.
+        2. Save the space with WiFi metadata.
+        3. Save the scan as a fingerprint in the wifipos database.
+        4. Attempt to retrain the positioning model.
+        """
         wifi_metadata = self._wifi_service.scan_current_environment()
 
         space = self._space_repo.create(
@@ -35,6 +42,19 @@ class SpaceService:
             space_type=data.space_type,
             wifi_metadata=wifi_metadata,
         )
+
+        # Save fingerprint to wifipos database (like `wifipos learn`)
+        self._wifi_service.save_fingerprint(data.name, wifi_metadata)
+
+        # Auto-train model if enough data (like `wifipos train`)
+        training_result = self._wifi_service.try_train_model()
+        if training_result:
+            logger.info(
+                "Model auto-trained after registering '%s': accuracy=%.2f",
+                data.name,
+                training_result["accuracy"],
+            )
+
         logger.info(
             f"Space '{space.name}' registered for user {user_id} "
             f"with {wifi_metadata.get('networks_detected', 0)} networks"

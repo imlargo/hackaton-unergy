@@ -1,12 +1,13 @@
 """WiFi integration service — adapter/wrapper around wifi-positioning module.
 
 This service acts as the **only** integration point between the local server
-and the frozen ``wifi-positioning/`` module.  It imports from ``wifipos``
-(the installed package) and adapts its outputs into domain-friendly dicts
-that can be stored alongside spaces.
+and the ``wifipos`` module (copied from ``wifi-positioning/src/wifipos/``).
 
-IMPORTANT: The ``wifi-positioning/`` directory and its contents must NEVER
-be modified.  This wrapper consumes it read-only.
+When a space is registered, this service:
+1. Scans WiFi networks in the current environment.
+2. Saves the scan as a fingerprint in the wifipos SQLite database.
+3. Attempts to retrain the positioning model (if ≥2 locations with ≥3
+   fingerprints each).
 
 When the WiFi module is not available (e.g. in CI or environments without
 WiFi hardware), the service attempts a **native** WiFi scan using
@@ -22,17 +23,20 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Try to import from the wifipos package (installed from wifi-positioning/)
+# Try to import from the wifipos package (copied into local-server/wifipos/)
 # ---------------------------------------------------------------------------
 _WIFIPOS_AVAILABLE = False
 
 try:
     from wifipos.model.predictor import Predictor  # noqa: F401
+    from wifipos.model.trainer import train_model  # noqa: F401
     from wifipos.scanner import WifiReading, WifiScanner  # noqa: F401
     from wifipos.storage.database import Database as WifiDatabase  # noqa: F401
     from wifipos.utils.platform import get_scanner  # noqa: F401
@@ -44,6 +48,9 @@ except ImportError:
         "wifi-positioning module not available. "
         "Will attempt native WiFi scanning."
     )
+
+# Default wifipos database path: local-server/data/wifipos.db
+_DEFAULT_WIFIPOS_DB = Path(__file__).resolve().parent.parent.parent / "data" / "wifipos.db"
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +220,20 @@ class WiFiIntegrationService:
     * ``get_current_location()``     — predict location using a trained model
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
         self._scanner: Any | None = None
+        self._db: Any | None = None
+
         if _WIFIPOS_AVAILABLE:
+            # Initialize wifipos database for fingerprint storage
+            resolved = Path(db_path) if db_path else _DEFAULT_WIFIPOS_DB
+            try:
+                self._db = WifiDatabase(resolved)
+                logger.info(f"WiFi positioning database at: {resolved}")
+            except Exception as exc:
+                logger.warning(f"Could not initialize wifipos database: {exc}")
+
+            # Initialize platform-specific WiFi scanner
             try:
                 self._scanner = get_scanner()
                 logger.info(f"WiFi scanner initialized: {type(self._scanner).__name__}")
@@ -248,6 +266,90 @@ class WiFiIntegrationService:
             return native
 
         return self._scan_mock()
+
+    def save_fingerprint(self, location: str, wifi_metadata: dict[str, Any]) -> bool:
+        """Save a WiFi scan as a fingerprint in the wifipos database.
+
+        This is equivalent to what ``wifipos learn <location>`` does:
+        the scan readings are stored so they can later be used for
+        model training.
+
+        Args:
+            location: The space/location name (e.g. "Cocina").
+            wifi_metadata: The dict returned by ``scan_current_environment()``.
+
+        Returns:
+            True if the fingerprint was saved, False otherwise.
+        """
+        if self._db is None:
+            logger.warning("wifipos database not available — fingerprint not saved.")
+            return False
+
+        readings = wifi_metadata.get("readings", [])
+        if not readings:
+            logger.warning("No WiFi readings to save as fingerprint.")
+            return False
+
+        try:
+            self._db.save_fingerprint(location, readings, datetime.now())
+            logger.info(
+                "Saved fingerprint for '%s' with %d readings.",
+                location,
+                len(readings),
+            )
+            return True
+        except Exception as exc:
+            logger.error("Failed to save fingerprint: %s", exc)
+            return False
+
+    def try_train_model(self) -> dict[str, Any] | None:
+        """Attempt to train the positioning model if enough data exists.
+
+        Training requires ≥2 locations with ≥3 fingerprints each.
+        This is called automatically after each space registration.
+
+        Returns:
+            A dict with training results (accuracy, locations, etc.),
+            or None if training was skipped or failed.
+        """
+        if self._db is None:
+            return None
+
+        try:
+            counts = self._db.get_fingerprint_count_by_location()
+            if len(counts) < 2:
+                logger.info(
+                    "Training skipped: need ≥2 locations, have %d.",
+                    len(counts),
+                )
+                return None
+
+            for loc, count in counts.items():
+                if count < 3:
+                    logger.info(
+                        "Training skipped: '%s' has only %d fingerprints (need ≥3).",
+                        loc,
+                        count,
+                    )
+                    return None
+
+            result = train_model(self._db)
+            logger.info(
+                "Model trained: accuracy=%.2f, classifier=%s, locations=%s",
+                result.accuracy,
+                result.classifier_name,
+                result.locations,
+            )
+            return {
+                "accuracy": result.accuracy,
+                "classifier": result.classifier_name,
+                "locations": result.locations,
+                "feature_count": result.feature_count,
+                "sample_count": result.sample_count,
+            }
+        except Exception as exc:
+            logger.error("Model training failed: %s", exc)
+            return None
 
     def get_setup_instructions(self) -> list[dict[str, str]]:
         """Return step-by-step instructions for space registration."""
@@ -299,10 +401,10 @@ class WiFiIntegrationService:
         """Predict the current location using a trained model.
 
         Returns None if no model is available yet.
-        This is a placeholder that will work once the user has
-        registered enough spaces and trained the positioning model.
+        Works once the user has registered enough spaces (≥2 locations
+        with ≥3 fingerprints each) and the model has been auto-trained.
         """
-        if not _WIFIPOS_AVAILABLE or self._scanner is None:
+        if not _WIFIPOS_AVAILABLE or self._scanner is None or self._db is None:
             return {
                 "location": "unknown",
                 "confidence": 0.0,
@@ -310,8 +412,7 @@ class WiFiIntegrationService:
             }
 
         try:
-            db = WifiDatabase()
-            predictor = Predictor(db)
+            predictor = Predictor(self._db)
             prediction = predictor.predict(self._scanner)
             return {
                 "location": prediction.location,

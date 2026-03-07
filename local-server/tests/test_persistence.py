@@ -145,3 +145,103 @@ class TestNativeWifiScanning:
         with patch("app.services.wifi_integration_service._native_wifi_scan", return_value=None):
             result = service.scan_current_environment()
         assert result["source"] == "mock"
+
+
+# ── Fingerprint saving & auto-training ───────────────────────────────
+
+
+class TestFingerprintAndTraining:
+    """Test that space registration saves fingerprints and trains the model."""
+
+    def _make_service(self) -> WiFiIntegrationService:
+        """Create a WiFiIntegrationService backed by an in-memory database."""
+        service = WiFiIntegrationService(db_path=":memory:")
+        service._scanner = None  # no real WiFi hardware in CI
+        return service
+
+    def _mock_readings(self, n: int = 3) -> list[dict]:
+        """Return *n* distinct fake WiFi readings."""
+        return [
+            {
+                "bssid": f"AA:BB:CC:DD:EE:{i:02X}",
+                "ssid": f"Network_{i}",
+                "rssi": -40 - i * 5,
+                "channel": 6 + i,
+            }
+            for i in range(n)
+        ]
+
+    def test_save_fingerprint_stores_to_db(self):
+        """save_fingerprint() should persist readings in the wifipos DB."""
+        service = self._make_service()
+        metadata = {"networks_detected": 3, "readings": self._mock_readings(), "source": "mock"}
+
+        ok = service.save_fingerprint("Cocina", metadata)
+
+        assert ok is True
+        counts = service._db.get_fingerprint_count_by_location()
+        assert counts == {"Cocina": 1}
+
+    def test_save_fingerprint_no_readings(self):
+        """save_fingerprint() with empty readings returns False."""
+        service = self._make_service()
+        ok = service.save_fingerprint("Empty", {"networks_detected": 0, "readings": []})
+        assert ok is False
+
+    def test_save_fingerprint_no_db(self):
+        """save_fingerprint() returns False when DB is not available."""
+        service = self._make_service()
+        service._db = None
+        ok = service.save_fingerprint("Room", {"readings": self._mock_readings()})
+        assert ok is False
+
+    def test_try_train_skips_with_one_location(self):
+        """Training should be skipped if only 1 location has fingerprints."""
+        service = self._make_service()
+        for _ in range(5):
+            service.save_fingerprint("Cocina", {"readings": self._mock_readings()})
+
+        result = service.try_train_model()
+        assert result is None  # need ≥2 locations
+
+    def test_try_train_skips_with_few_fingerprints(self):
+        """Training should be skipped if a location has <3 fingerprints."""
+        service = self._make_service()
+        for _ in range(5):
+            service.save_fingerprint("Cocina", {"readings": self._mock_readings()})
+        service.save_fingerprint("Sala", {"readings": self._mock_readings()})  # only 1
+
+        result = service.try_train_model()
+        assert result is None  # Sala has < 3
+
+    def test_try_train_succeeds_with_enough_data(self):
+        """Training should succeed with ≥2 locations and ≥3 fingerprints each."""
+        service = self._make_service()
+        # Cocina: 4 fingerprints with distinct signals
+        for i in range(4):
+            service.save_fingerprint("Cocina", {
+                "readings": [
+                    {"bssid": "AA:BB:CC:DD:EE:01", "ssid": "Net1", "rssi": -40 + i, "channel": 6},
+                    {"bssid": "AA:BB:CC:DD:EE:02", "ssid": "Net2", "rssi": -60 + i, "channel": 11},
+                ],
+            })
+        # Sala: 4 fingerprints with different signal pattern
+        for i in range(4):
+            service.save_fingerprint("Sala", {
+                "readings": [
+                    {"bssid": "AA:BB:CC:DD:EE:01", "ssid": "Net1", "rssi": -70 + i, "channel": 6},
+                    {"bssid": "AA:BB:CC:DD:EE:02", "ssid": "Net2", "rssi": -35 + i, "channel": 11},
+                ],
+            })
+
+        result = service.try_train_model()
+        assert result is not None
+        assert "accuracy" in result
+        assert "classifier" in result
+        assert set(result["locations"]) == {"Cocina", "Sala"}
+
+    def test_try_train_no_db(self):
+        """try_train_model() returns None when DB is not available."""
+        service = self._make_service()
+        service._db = None
+        assert service.try_train_model() is None
