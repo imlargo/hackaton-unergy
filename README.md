@@ -110,18 +110,33 @@ curl http://localhost:8001/
 # 1. Ver instrucciones para registrar espacio
 curl http://localhost:8000/instructions/register-space
 
-# 2. Registrar un espacio (no requiere autenticación)
+# 2. Registrar un espacio con walk-mode (20 muestras por defecto)
 curl -X POST http://localhost:8000/spaces \
   -H "Content-Type: application/json" \
   -d '{"name":"Cocina","space_type":"kitchen"}'
 
+# 2b. Registrar con menos muestras (más rápido para pruebas)
+curl -X POST http://localhost:8000/spaces \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Sala","space_type":"living_room","samples":5}'
+
 # 3. Listar espacios
 curl http://localhost:8000/spaces
 
-# 4. (Opcional) Registrar usuario
-curl -X POST http://localhost:8000/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"usuario1","email":"user@example.com","password":"mipass123"}'
+# 4. Iniciar tracking continuo
+curl -X POST "http://localhost:8000/tracking/start?interval=3"
+
+# 5. Ver estado del tracking y última predicción
+curl http://localhost:8000/tracking/status
+
+# 6. Predicción única
+curl http://localhost:8000/tracking/predict
+
+# 7. Detener tracking
+curl -X POST http://localhost:8000/tracking/stop
+
+# 8. Resetear todo (espacios, fingerprints, modelos)
+curl -X DELETE http://localhost:8000/spaces/reset
 ```
 
 ---
@@ -129,7 +144,7 @@ curl -X POST http://localhost:8000/auth/register \
 ## 🧪 Ejecutar tests
 
 ```bash
-# Tests del servidor local (34 tests: 17 endpoints + 17 persistencia/WiFi/training)
+# Tests del servidor local (51 tests: 17 endpoints + 34 persistencia/WiFi/tracking/reset)
 cd local-server
 python -m pytest tests/ -v
 
@@ -178,9 +193,14 @@ export const REALTIME_WS_URL = 'ws://localhost:8001/ws';
 | `GET` | `/auth/me` | Sí | Obtener usuario actual |
 | `GET` | `/instructions/register-space` | No | Instrucciones para registrar espacio |
 | `GET` | `/instructions/wifi-status` | No | Estado del módulo WiFi |
-| `POST` | `/spaces` | No | Registrar espacio actual |
+| `POST` | `/spaces` | No | Registrar espacio (walk-mode, `samples` configurable) |
 | `GET` | `/spaces` | No | Listar espacios |
 | `GET` | `/spaces/{id}` | No | Obtener espacio por ID |
+| `DELETE` | `/spaces/reset` | No | **Resetear todo** (espacios, fingerprints, modelos) |
+| `POST` | `/tracking/start` | No | Iniciar tracking continuo (`interval` configurable) |
+| `POST` | `/tracking/stop` | No | Detener tracking |
+| `GET` | `/tracking/status` | No | Estado del tracking + última predicción |
+| `GET` | `/tracking/predict` | No | Predicción única de ubicación |
 
 > 📖 Documentación interactiva (Swagger): **http://localhost:8000/docs**
 

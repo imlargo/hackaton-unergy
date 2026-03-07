@@ -54,6 +54,9 @@ except ImportError:
 # Default wifipos database path: local-server/data/wifipos.db
 _DEFAULT_WIFIPOS_DB = Path(__file__).resolve().parent.parent.parent / "data" / "wifipos.db"
 
+# Timeout for waiting on the tracking thread to stop.
+_TRACKING_THREAD_JOIN_TIMEOUT = 10
+
 
 # ---------------------------------------------------------------------------
 # Native Linux WiFi scanning (fallback when wifipos is not installed)
@@ -485,7 +488,7 @@ class WiFiIntegrationService:
             is_mock = first_scan.get("source") == "mock"
             self.save_fingerprint(location, first_scan)
             saved_count += 1
-            for i in range(1, num_samples):
+            for _ in range(1, num_samples):
                 if not is_mock:
                     time.sleep(interval)
                 scan = self.scan_current_environment()
@@ -544,7 +547,7 @@ class WiFiIntegrationService:
 
         # Wait for the thread to finish (with timeout)
         if self._tracking_thread is not None:
-            self._tracking_thread.join(timeout=10)
+            self._tracking_thread.join(timeout=_TRACKING_THREAD_JOIN_TIMEOUT)
             self._tracking_thread = None
 
         logger.info("Tracking stopped.")

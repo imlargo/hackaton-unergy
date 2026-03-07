@@ -36,7 +36,7 @@ hackaton-unergy/
 │   │   └── spaces.json          # Persistencia de espacios (creado automáticamente)
 │   └── tests/
 │       ├── test_api.py              # 17 tests (endpoints)
-│       └── test_persistence.py      # 17 tests (persistencia JSON, escaneo WiFi, fingerprints, training)
+│       └── test_persistence.py      # 34 tests (persistencia, WiFi, walk-mode, tracking, reset)
 └── remote-server/           # Hub WebSocket en tiempo real
     ├── main.py              # Punto de entrada
     ├── requirements.txt     # Dependencias Python
@@ -77,7 +77,7 @@ uvicorn main:app --reload --port 8001
 ### Ejecutar tests
 
 ```bash
-# Tests del servidor local (34 tests: 17 endpoints + 17 persistencia/WiFi/training)
+# Tests del servidor local (51 tests: 17 endpoints + 34 persistencia/WiFi/tracking/reset)
 cd local-server && python -m pytest tests/ -v
 
 # Tests del servidor remoto (4 tests)
@@ -94,9 +94,14 @@ cd remote-server && python -m pytest tests/ -v
 | `GET` | `/auth/me` | Sí | Obtener usuario actual |
 | `GET` | `/instructions/register-space` | No | Instrucciones para registrar espacio |
 | `GET` | `/instructions/wifi-status` | No | Estado del módulo WiFi |
-| `POST` | `/spaces` | No | Registrar espacio actual |
+| `POST` | `/spaces` | No | Registrar espacio (walk-mode, `samples` configurable) |
 | `GET` | `/spaces` | No | Listar espacios |
 | `GET` | `/spaces/{id}` | No | Obtener espacio por ID |
+| `DELETE` | `/spaces/reset` | No | **Resetear todo** (espacios, fingerprints, modelos) |
+| `POST` | `/tracking/start` | No | Iniciar tracking continuo (`interval` configurable) |
+| `POST` | `/tracking/stop` | No | Detener tracking |
+| `GET` | `/tracking/status` | No | Estado del tracking + última predicción |
+| `GET` | `/tracking/predict` | No | Predicción única de ubicación |
 
 ### Ejemplo: Registrar usuario
 
@@ -109,9 +114,38 @@ curl -X POST http://localhost:8000/auth/register \
 ### Ejemplo: Registrar espacio
 
 ```bash
+# Walk-mode con 20 muestras (por defecto, el usuario camina por el espacio)
 curl -X POST http://localhost:8000/spaces \
   -H "Content-Type: application/json" \
   -d '{"name":"Cocina","space_type":"kitchen"}'
+
+# Menos muestras para pruebas rápidas
+curl -X POST http://localhost:8000/spaces \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Sala","space_type":"living_room","samples":5}'
+```
+
+### Ejemplo: Tracking (predicción continua)
+
+```bash
+# Iniciar tracking con predicción cada 3 segundos
+curl -X POST "http://localhost:8000/tracking/start?interval=3"
+
+# Ver estado y última predicción
+curl http://localhost:8000/tracking/status
+
+# Predicción única (sin tracking continuo)
+curl http://localhost:8000/tracking/predict
+
+# Detener tracking
+curl -X POST http://localhost:8000/tracking/stop
+```
+
+### Ejemplo: Resetear todo
+
+```bash
+# Borra todos los espacios, fingerprints WiFi y modelos entrenados
+curl -X DELETE http://localhost:8000/spaces/reset
 ```
 
 ## WebSocket del servidor remoto

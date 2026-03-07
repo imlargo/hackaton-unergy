@@ -332,8 +332,12 @@ class TestTracking:
         import time
         service = self._make_service()
         service.start_tracking(interval=0.1)
-        time.sleep(0.5)  # Allow a few prediction cycles
-        status = service.get_tracking_status()
+        # Poll for prediction with timeout instead of fixed sleep
+        for _ in range(20):
+            time.sleep(0.1)
+            status = service.get_tracking_status()
+            if status["latest_prediction"] is not None:
+                break
         assert status["active"] is True
         assert status["latest_prediction"] is not None
         service.stop_tracking()

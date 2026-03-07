@@ -39,10 +39,11 @@ Unergy permite **registrar espacios** (cocina, sala, oficina, etc.) usando seña
 
 ### ¿Qué pasa internamente cuando registras un espacio?
 
-1. **Escaneo WiFi** — Captura todas las redes cercanas (BSSID, SSID, señal, canal)
+1. **Escaneo WiFi inicial** — Captura todas las redes cercanas (BSSID, SSID, señal, canal) para los metadatos del espacio
 2. **Guardar espacio** — Se guarda en `data/spaces.json` con los datos WiFi
-3. **Guardar huella** — Se guarda la huella WiFi en `data/wifipos.db` (SQLite) — esto es lo que el módulo `wifipos` llama "learn"
-4. **Auto-entrenar** — Si ya hay suficientes datos (≥2 ubicaciones con ≥3 huellas), entrena automáticamente un modelo de Machine Learning — esto es lo que `wifipos` llama "train"
+3. **Walk-mode (movimiento)** — Se toman **20 muestras** (configurable con `samples`) mientras el usuario camina por el espacio. Cada muestra captura las señales WiFi desde una posición ligeramente diferente, lo que mejora la precisión del modelo
+4. **Guardar huellas** — Cada muestra se guarda como fingerprint en `data/wifipos.db` (SQLite) — equivale a `wifipos learn --walk`
+5. **Auto-entrenar** — Si ya hay suficientes datos (≥2 ubicaciones con ≥3 huellas), entrena automáticamente un modelo ML — equivale a `wifipos train`
 
 ### ¿Cómo se usa el módulo `wifipos`?
 
@@ -50,9 +51,11 @@ El módulo `wifi-positioning/` (que ya estaba en el repo) se copió a `local-ser
 
 | Operación | Equivale a CLI | Cuándo pasa |
 |-----------|----------------|-------------|
-| `save_fingerprint()` | `wifipos learn cocina` | Cada vez que registras un espacio |
-| `try_train_model()` | `wifipos train` | Automático si hay ≥2 ubicaciones con ≥3 huellas |
-| `get_current_location()` | `wifipos predict` | Cuando pides tu ubicación actual |
+| `collect_and_save_fingerprints()` | `wifipos learn cocina --walk` | Al registrar un espacio (20 muestras con movimiento) |
+| `try_train_model()` | `wifipos train` | Automático después de cada registro si hay ≥2 ubicaciones con ≥3 huellas |
+| `start_tracking()` / `stop_tracking()` | `wifipos track` | `POST /tracking/start` y `POST /tracking/stop` |
+| `get_current_location()` | `wifipos predict` | `GET /tracking/predict` — predicción única |
+| `reset_wifi_data()` | `wifipos reset` | `DELETE /spaces/reset` — borra todo |
 
 ### ¿Dónde se guardan los datos?
 
@@ -99,7 +102,7 @@ El módulo `wifi-positioning/` (que ya estaba en el repo) se copió a `local-ser
 
 ## Flujo 1: Registrar un espacio nuevo
 
-Este es el flujo principal. El usuario crea un espacio y el sistema captura automáticamente la información WiFi del entorno, **guarda la huella WiFi** en la base de datos de wifipos, y **entrena automáticamente** el modelo de posicionamiento.
+Este es el flujo principal. El usuario crea un espacio y el sistema captura automáticamente múltiples muestras WiFi del entorno **mientras el usuario se mueve** (walk mode), **guarda todas las huellas WiFi** en la base de datos, y **entrena automáticamente** el modelo de posicionamiento.
 
 ### Paso a paso:
 
@@ -115,23 +118,26 @@ USUARIO                  FRONTEND                    LOCAL SERVER
   │ ─────────────────────→│                            │
   │                        │ POST /spaces               │
   │                        │ { name: "Cocina",          │
-  │                        │   space_type: "kitchen" }  │
+  │                        │   space_type: "kitchen",   │
+  │                        │   samples: 20 }            │
   │                        │ ──────────────────────────→│
   │                        │                            │
-  │                        │                    ┌───────┤
-  │                        │                    │ 1. SpaceService.register_space()
-  │                        │                    │
-  │                        │                    │ 2. WiFi scan (cadena de fallback):
+  │  ¡Camina por el       │                    ┌───────┤
+  │   espacio mientras    │                    │ 1. SpaceService.register_space()
+  │   se recolectan       │                    │
+  │   muestras!           │                    │ 2. WiFi scan inicial (metadata):
   │                        │                    │    wifipos scanner → nmcli
   │                        │                    │    → iwlist → mock
   │                        │                    │
   │                        │                    │ 3. SpaceRepository.create()
   │                        │                    │    → Guarda en data/spaces.json
   │                        │                    │
-  │                        │                    │ 4. save_fingerprint()
-  │                        │                    │    → Guarda huella WiFi en
+  │                        │                    │ 4. collect_and_save_fingerprints()
+  │                        │                    │    → 20 escaneos WiFi con
+  │                        │                    │      movimiento (walk mode)
+  │                        │                    │    → Cada uno se guarda en
   │                        │                    │      data/wifipos.db (SQLite)
-  │                        │                    │    (equivale a `wifipos learn`)
+  │                        │                    │    (equivale a wifipos learn --walk)
   │                        │                    │
   │                        │                    │ 5. try_train_model()
   │                        │                    │    Si hay ≥2 ubicaciones con
@@ -171,36 +177,52 @@ El campo `source` en `wifi_metadata` siempre indica qué método se usó:
 - `"native_linux"` — nmcli o iwlist directo
 - `"mock"` — datos de prueba
 
-### Flujo de datos wifipos (learn → train → predict):
+### Flujo de datos wifipos (learn → train → predict → track → reset):
 
 ```
-POST /spaces → scan WiFi → guardar espacio
-                    │
-                    ▼
-         save_fingerprint()              ← equivale a `wifipos learn`
-         → INSERT INTO fingerprints      (SQLite: data/wifipos.db)
-                    │
-                    ▼
-         try_train_model()               ← equivale a `wifipos train`
-         ├── ¿≥2 ubicaciones con ≥3 huellas?
-         │   ├── NO → skip (aún no hay suficientes datos)
-         │   └── SÍ → Entrenar modelo ML:
-         │       1. augment_fingerprints (ruido ±3 dB)
-         │       2. build_feature_matrix (BSSIDs → columnas)
-         │       3. Probar RandomForest, KNN, GradientBoosting
-         │       4. Seleccionar mejor por cross-validation
-         │       5. Serializar con joblib → BLOB
-         │       6. INSERT INTO models (SQLite)
-         └────────────────────────────────────────
+POST /spaces (samples=20) → scan WiFi → guardar espacio
+                     │
+                     ▼
+          collect_and_save_fingerprints()  ← equivale a `wifipos learn --walk`
+          → 20 escaneos WiFi con movimiento
+          → 20x INSERT INTO fingerprints   (SQLite: data/wifipos.db)
+                     │
+                     ▼
+          try_train_model()               ← equivale a `wifipos train`
+          ├── ¿≥2 ubicaciones con ≥3 huellas?
+          │   ├── NO → skip (aún no hay suficientes datos)
+          │   └── SÍ → Entrenar modelo ML:
+          │       1. augment_fingerprints (ruido ±3 dB)
+          │       2. build_feature_matrix (BSSIDs → columnas)
+          │       3. Probar RandomForest, KNN, GradientBoosting
+          │       4. Seleccionar mejor por cross-validation
+          │       5. Serializar con joblib → BLOB
+          │       6. INSERT INTO models (SQLite)
+          └────────────────────────────────────────
 
-GET /current-location (futuro)
-         │
-         ▼
-  Predictor.predict(scanner)
-  1. scan_averaged(3 escaneos)
-  2. Construir vector de features
-  3. pipeline.predict_proba()
-  4. → { location: "Cocina", confidence: 0.95 }
+GET /tracking/predict                    ← equivale a `wifipos predict`
+          │
+          ▼
+   Predictor.predict(scanner)
+   1. scan_averaged(3 escaneos)
+   2. Construir vector de features
+   3. pipeline.predict_proba()
+   4. → { location: "Cocina", confidence: 0.95 }
+
+POST /tracking/start                     ← equivale a `wifipos track`
+          │
+          ▼
+   Background thread:
+   while active:
+     predict() → actualizar latest_prediction
+     sleep(interval)
+
+DELETE /spaces/reset                     ← equivale a `wifipos reset`
+          │
+          ▼
+   1. Detener tracking (si activo)
+   2. SpaceRepository.delete_all() → vaciar spaces.json
+   3. Database.reset() → DROP fingerprints + models (SQLite)
 ```
 
 ---
@@ -368,8 +390,10 @@ FRONTEND A                 REMOTE SERVER              FRONTEND B
 | Componente | Estado | Persistencia | WiFi |
 |-----------|--------|-------------|------|
 | **Espacios** | ✅ Real | JSON en disco (`data/spaces.json`) | Datos WiFi reales guardados con cada espacio |
-| **Huellas WiFi** | ✅ Real | SQLite (`data/wifipos.db`) | Cada registro guarda huella en la DB de wifipos |
+| **Huellas WiFi** | ✅ Walk-mode | SQLite (`data/wifipos.db`) | 20 muestras con movimiento por espacio |
 | **Modelo ML** | ✅ Auto-train | SQLite (`data/wifipos.db`) | Se entrena automáticamente al tener ≥2 ubicaciones con ≥3 huellas |
+| **Tracking** | ✅ Real | Background thread | `POST /tracking/start` / `POST /tracking/stop` |
+| **Reset** | ✅ Real | Borra todo | `DELETE /spaces/reset` — espacios + fingerprints + modelos |
 | **WiFi scan** | ✅ Real | N/A | wifipos → nmcli → iwlist → mock |
 | **Usuarios** | ⚠️ Mock | In-memory | N/A |
 
@@ -394,7 +418,8 @@ pnpm install && pnpm dev
 ```
 
 Abrir **http://localhost:5173** y registrar espacios. Por cada espacio:
-1. Se capturan las redes WiFi del entorno
-2. Se guarda la huella WiFi en `data/wifipos.db`
+1. Se toman **20 muestras WiFi** mientras caminas por el espacio (walk mode)
+2. Todas las huellas se guardan en `data/wifipos.db`
 3. Cuando hay ≥2 ubicaciones con ≥3 registros, el modelo se entrena automáticamente
-4. El modelo entrenado permite predecir la ubicación actual
+4. **Iniciar tracking** para predicción continua de ubicación
+5. **Resetear todo** con `curl -X DELETE http://localhost:8000/spaces/reset`
