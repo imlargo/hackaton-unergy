@@ -56,7 +56,7 @@
 		shirt: Shirt,
 		'cooking-pot': CookingPot,
 		plug: Plug,
-		refrigerator: Plug,
+		refrigerator: RefrigeratorIcon,
 	};
 
 	function getDeviceIcon(iconName: string) {
@@ -382,7 +382,7 @@
 											</span>
 											<span class="flex items-center gap-1">
 												<Leaf class="size-3" />
-												{formatCo2(device.total_kwh * 0.126)}
+												{formatCo2(device.total_kwh * (summary?.co2_factor_kg_per_kwh ?? 0.126))}
 											</span>
 											{#if device.is_on}
 												<Badge variant="default" class="bg-emerald-600 text-[10px]">
