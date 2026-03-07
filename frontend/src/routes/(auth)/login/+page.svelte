@@ -6,7 +6,7 @@
 <div class="grid min-h-svh lg:grid-cols-2">
 	<div class="flex flex-col gap-4 p-6 md:p-10">
 		<div class="flex justify-center gap-2 md:justify-start">
-			<a href="/" class="flex items-center gap-2.5 font-medium">
+			<a href="/" aria-label="Ir al inicio" class="flex items-center gap-2.5 font-medium">
 				<div
 					class="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm"
 				>

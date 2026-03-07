@@ -772,7 +772,7 @@
 	</div>
 
 	<!-- ═══════════════════ Spaces List ═══════════════════ -->
-	<div>
+	<div id="espacios">
 		<div class="mb-4 flex items-center gap-2.5">
 			<div class="flex size-8 items-center justify-center rounded-lg bg-primary/10">
 				<LayoutDashboard class="size-4 text-primary" />
@@ -828,7 +828,7 @@
 							<div class="flex items-center justify-between">
 								<div class="flex items-center gap-2.5">
 									<div class={`flex size-9 items-center justify-center rounded-lg transition-colors ${isCurrentSpace ? 'bg-emerald-500/15' : 'bg-muted'}`}>
-										<Icon class={`size-4.5 ${isCurrentSpace ? 'text-emerald-500' : 'text-muted-foreground'}`} />
+										<Icon class={`size-5 ${isCurrentSpace ? 'text-emerald-500' : 'text-muted-foreground'}`} />
 									</div>
 									<Card.Title class="text-base">{space.name}</Card.Title>
 								</div>
