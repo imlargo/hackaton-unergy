@@ -250,3 +250,52 @@ class TestSpaces:
             json={"name": "Test", "space_type": "room"},
         )
         assert resp.status_code == 200
+
+
+# ── Model export / import ────────────────────────────────────────────
+
+
+class TestModelExportImport:
+    """Verify model bundle export and import round-trip."""
+
+    def test_export_returns_bundle(self, client):
+        """GET /model/export should return a JSON bundle."""
+        resp = client.get("/model/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "version" in data
+        assert "fingerprints" in data
+        assert "exported_at" in data
+
+    def test_import_rejects_invalid_json(self, client):
+        """POST /model/import should reject a non-JSON file."""
+        resp = client.post(
+            "/model/import",
+            files={"file": ("bad.wifipos", b"NOT JSON", "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "error" in resp.json()
+
+    def test_export_import_round_trip(self, client):
+        """Export a bundle then import it — fingerprint count should match."""
+        # Register a space so there's at least 1 fingerprint
+        client.post("/spaces", json={"name": "RT_Cocina", "space_type": "kitchen"})
+
+        # Export
+        export_resp = client.get("/model/export")
+        assert export_resp.status_code == 200
+        bundle = export_resp.json()
+        fp_count = len(bundle["fingerprints"])
+        assert fp_count >= 1
+
+        # Import
+        import json as _json
+
+        bundle_bytes = _json.dumps(bundle).encode()
+        import_resp = client.post(
+            "/model/import",
+            files={"file": ("data.wifipos", bundle_bytes, "application/json")},
+        )
+        assert import_resp.status_code == 200
+        result = import_resp.json()
+        assert result["fingerprints_imported"] == fp_count

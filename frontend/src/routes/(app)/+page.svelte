@@ -5,6 +5,7 @@
 		Wifi, Plus, MapPin, Radio, Home, Building, ChefHat, Warehouse,
 		LayoutDashboard, Navigation, Power, PowerOff, Activity, Target, Clock,
 		BarChart3, Eye, Zap, Sparkles, CircleDot, TrendingUp, Loader2,
+		Download, Upload, Share2,
 	} from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -19,6 +20,7 @@
 	import { instructionsService, type WifiStatus } from '$lib/features/instructions/services/instructions';
 	import { trackingService, type LocationPrediction, type TrackingStatus, type CollectionStatus, type WifiPosDiagnostics } from '$lib/features/tracking/services/tracking';
 	import type { Space, SpaceCreate } from '$lib/domain/models/space';
+	import { BACKEND_BASE_URL } from '$lib/config/constants';
 
 	let spaces: Space[] = $state([]);
 	let wifiStatus: WifiStatus | null = $state(null);
@@ -43,6 +45,10 @@
 	let modelReady = $state(false);
 	let collectingSpaces: Set<string> = $state(new Set());
 	let collectionPollInterval: ReturnType<typeof setInterval> | null = $state(null);
+
+	// Export / Import state
+	let exporting = $state(false);
+	let importing = $state(false);
 
 	const TRACKING_POLL_MS = 3000;
 	const COLLECTION_POLL_MS = 3000;
@@ -362,6 +368,59 @@
 		}
 		if (collectingSpaces.size === 0) {
 			stopCollectionPolling();
+		}
+	}
+
+	// ── Model export / import ──────────────────────────────────────
+
+	async function exportModel() {
+		exporting = true;
+		try {
+			const resp = await fetch(`${BACKEND_BASE_URL}/model/export`);
+			if (!resp.ok) throw new Error('Export failed');
+			const bundle = await resp.json();
+			const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `unergy-model-${new Date().toISOString().slice(0, 10)}.wifipos`;
+			a.click();
+			URL.revokeObjectURL(url);
+			toast.success(`Modelo exportado — ${bundle.fingerprints?.length ?? 0} huellas`);
+		} catch (err) {
+			console.error(err);
+			toast.error('Error al exportar el modelo');
+		} finally {
+			exporting = false;
+		}
+	}
+
+	async function importModel(event: Event) {
+		const input = event.target as HTMLInputElement;
+		const file = input?.files?.[0];
+		if (!file) return;
+		importing = true;
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			const resp = await fetch(`${BACKEND_BASE_URL}/model/import`, {
+				method: 'POST',
+				body: formData,
+			});
+			if (!resp.ok) throw new Error('Import failed');
+			const result = await resp.json();
+			toast.success(
+				`Modelo importado — ${result.fingerprints_imported} huellas` +
+					(result.model_imported ? ', modelo listo ✓' : '')
+			);
+			await loadData(); // refresh everything
+		} catch (err) {
+			console.error(err);
+			toast.error('Error al importar — asegúrate de que sea un archivo .wifipos válido');
+		} finally {
+			importing = false;
+			// Reset file input
+			if (input) input.value = '';
 		}
 	}
 
@@ -958,5 +1017,69 @@
 				{/each}
 			</div>
 		{/if}
+	</div>
+
+	<!-- ═══════════════════ Model Sharing ═══════════════════ -->
+	<div>
+		<div class="mb-4 flex items-center gap-2.5">
+			<div class="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+				<Share2 class="size-4 text-primary" />
+			</div>
+			<h2 class="text-xl font-semibold">Compartir modelo</h2>
+		</div>
+
+		<Card.Root>
+			<Card.Content class="space-y-4 p-6">
+				<p class="text-sm text-muted-foreground">
+					Exporta el modelo entrenado y las huellas WiFi para usarlos en otro computador.
+					Importa un archivo <code class="rounded bg-muted px-1">.wifipos</code> para cargar datos de otra máquina.
+				</p>
+
+				<div class="flex flex-wrap gap-3">
+					<Button
+						variant="outline"
+						class="gap-2"
+						onclick={exportModel}
+						disabled={exporting || !modelReady}
+					>
+						{#if exporting}
+							<Loader2 class="size-4 animate-spin" />
+							Exportando…
+						{:else}
+							<Download class="size-4" />
+							Exportar modelo
+						{/if}
+					</Button>
+
+					<Button
+						variant="outline"
+						class="relative gap-2"
+						disabled={importing}
+					>
+						{#if importing}
+							<Loader2 class="size-4 animate-spin" />
+							Importando…
+						{:else}
+							<Upload class="size-4" />
+							Importar modelo
+						{/if}
+						<input
+							type="file"
+							accept=".wifipos,.json"
+							class="absolute inset-0 cursor-pointer opacity-0"
+							onchange={importModel}
+							disabled={importing}
+						/>
+					</Button>
+				</div>
+
+				{#if !modelReady}
+					<p class="text-xs text-amber-600">
+						⚠️ Registra al menos 2 espacios para entrenar un modelo antes de exportar.
+						También puedes <strong>importar</strong> un modelo de otro PC.
+					</p>
+				{/if}
+			</Card.Content>
+		</Card.Root>
 	</div>
 </div>
