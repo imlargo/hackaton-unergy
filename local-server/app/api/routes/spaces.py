@@ -1,13 +1,14 @@
-"""Space management API routes."""
+"""Space management API routes (no authentication required)."""
 
 from fastapi import APIRouter, Depends
 
-from app.api.routes.auth import get_current_user
 from app.domain.space import SpaceCreate, SpaceResponse
-from app.domain.user import UserResponse
 from app.services.space_service import SpaceService
 
 router = APIRouter(prefix="/spaces", tags=["spaces"])
+
+# Default user ID used for all requests (no auth).
+DEFAULT_USER_ID = 1
 
 _space_service: SpaceService | None = None
 
@@ -25,27 +26,24 @@ def get_space_service() -> SpaceService:
 @router.post("", response_model=SpaceResponse)
 def register_space(
     data: SpaceCreate,
-    current_user: UserResponse = Depends(get_current_user),
     space_service: SpaceService = Depends(get_space_service),
 ):
     """Register a new space using current WiFi environment."""
-    return space_service.register_space(user_id=current_user.id, data=data)
+    return space_service.register_space(user_id=DEFAULT_USER_ID, data=data)
 
 
 @router.get("", response_model=list[SpaceResponse])
 def list_spaces(
-    current_user: UserResponse = Depends(get_current_user),
     space_service: SpaceService = Depends(get_space_service),
 ):
-    """List all spaces for the current user."""
-    return space_service.list_spaces(user_id=current_user.id)
+    """List all spaces (uses default user, no authentication required)."""
+    return space_service.list_spaces(user_id=DEFAULT_USER_ID)
 
 
 @router.get("/{space_id}", response_model=SpaceResponse)
 def get_space(
     space_id: int,
-    current_user: UserResponse = Depends(get_current_user),
     space_service: SpaceService = Depends(get_space_service),
 ):
     """Get a specific space by ID."""
-    return space_service.get_space(space_id=space_id, user_id=current_user.id)
+    return space_service.get_space(space_id=space_id, user_id=DEFAULT_USER_ID)

@@ -90,9 +90,9 @@ cd remote-server && python -m pytest tests/ -v
 | `GET` | `/auth/me` | Sí | Obtener usuario actual |
 | `GET` | `/instructions/register-space` | No | Instrucciones para registrar espacio |
 | `GET` | `/instructions/wifi-status` | No | Estado del módulo WiFi |
-| `POST` | `/spaces` | Sí | Registrar espacio actual |
-| `GET` | `/spaces` | Sí | Listar espacios del usuario |
-| `GET` | `/spaces/{id}` | Sí | Obtener espacio por ID |
+| `POST` | `/spaces` | No | Registrar espacio actual |
+| `GET` | `/spaces` | No | Listar espacios |
+| `GET` | `/spaces/{id}` | No | Obtener espacio por ID |
 
 ### Ejemplo: Registrar usuario
 
@@ -105,10 +105,8 @@ curl -X POST http://localhost:8000/auth/register \
 ### Ejemplo: Registrar espacio
 
 ```bash
-TOKEN="<access_token del login>"
 curl -X POST http://localhost:8000/spaces \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
   -d '{"name":"Cocina","space_type":"kitchen"}'
 ```
 

@@ -107,25 +107,21 @@ curl http://localhost:8001/
 ### Probar el flujo completo
 
 ```bash
-# 1. Registrar usuario
+# 1. Ver instrucciones para registrar espacio
+curl http://localhost:8000/instructions/register-space
+
+# 2. Registrar un espacio (no requiere autenticación)
+curl -X POST http://localhost:8000/spaces \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Cocina","space_type":"kitchen"}'
+
+# 3. Listar espacios
+curl http://localhost:8000/spaces
+
+# 4. (Opcional) Registrar usuario
 curl -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"usuario1","email":"user@example.com","password":"mipass123"}'
-
-# 2. Guardar el token del response
-TOKEN="<pegar access_token de la respuesta>"
-
-# 3. Ver instrucciones para registrar espacio
-curl http://localhost:8000/instructions/register-space
-
-# 4. Registrar un espacio
-curl -X POST http://localhost:8000/spaces \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"name":"Cocina","space_type":"kitchen"}'
-
-# 5. Listar espacios del usuario
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/spaces
 ```
 
 ---
@@ -182,9 +178,9 @@ export const REALTIME_WS_URL = 'ws://localhost:8001/ws';
 | `GET` | `/auth/me` | Sí | Obtener usuario actual |
 | `GET` | `/instructions/register-space` | No | Instrucciones para registrar espacio |
 | `GET` | `/instructions/wifi-status` | No | Estado del módulo WiFi |
-| `POST` | `/spaces` | Sí | Registrar espacio actual |
-| `GET` | `/spaces` | Sí | Listar espacios del usuario |
-| `GET` | `/spaces/{id}` | Sí | Obtener espacio por ID |
+| `POST` | `/spaces` | No | Registrar espacio actual |
+| `GET` | `/spaces` | No | Listar espacios |
+| `GET` | `/spaces/{id}` | No | Obtener espacio por ID |
 
 > 📖 Documentación interactiva (Swagger): **http://localhost:8000/docs**
 

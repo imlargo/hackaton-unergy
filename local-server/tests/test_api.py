@@ -170,12 +170,10 @@ class TestInstructions:
 # ── Spaces ────────────────────────────────────────────────────────────
 
 class TestSpaces:
-    def test_register_space(self, client, registered_user):
-        _, token = registered_user
+    def test_register_space(self, client):
         resp = client.post(
             "/spaces",
             json={"name": "Cocina", "space_type": "kitchen"},
-            headers=auth_header(token),
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -184,48 +182,44 @@ class TestSpaces:
         assert "wifi_metadata" in body
         assert body["wifi_metadata"]["networks_detected"] >= 1
 
-    def test_list_spaces(self, client, registered_user):
-        _, token = registered_user
+    def test_list_spaces(self, client):
         # Register two spaces
         client.post(
             "/spaces",
             json={"name": "Sala", "space_type": "living_room"},
-            headers=auth_header(token),
         )
         client.post(
             "/spaces",
             json={"name": "Oficina", "space_type": "office"},
-            headers=auth_header(token),
         )
-        resp = client.get("/spaces", headers=auth_header(token))
+        resp = client.get("/spaces")
         assert resp.status_code == 200
         spaces = resp.json()
-        assert len(spaces) == 2
+        assert len(spaces) >= 2
         names = {s["name"] for s in spaces}
-        assert names == {"Sala", "Oficina"}
+        assert "Sala" in names
+        assert "Oficina" in names
 
-    def test_get_space_by_id(self, client, registered_user):
-        _, token = registered_user
+    def test_get_space_by_id(self, client):
         create_resp = client.post(
             "/spaces",
             json={"name": "Garaje", "space_type": "garage"},
-            headers=auth_header(token),
         )
         space_id = create_resp.json()["id"]
-        resp = client.get(f"/spaces/{space_id}", headers=auth_header(token))
+        resp = client.get(f"/spaces/{space_id}")
         assert resp.status_code == 200
         assert resp.json()["name"] == "Garaje"
 
-    def test_get_nonexistent_space(self, client, registered_user):
-        _, token = registered_user
-        resp = client.get("/spaces/999", headers=auth_header(token))
+    def test_get_nonexistent_space(self, client):
+        resp = client.get("/spaces/999")
         assert resp.status_code == 404
 
-    def test_spaces_require_auth(self, client):
+    def test_spaces_no_auth_required(self, client):
+        """Spaces endpoints work without any authentication."""
         resp = client.get("/spaces")
-        assert resp.status_code in (401, 403)
+        assert resp.status_code == 200
         resp = client.post(
             "/spaces",
-            json={"name": "X", "space_type": "room"},
+            json={"name": "Test", "space_type": "room"},
         )
-        assert resp.status_code in (401, 403)
+        assert resp.status_code == 200
