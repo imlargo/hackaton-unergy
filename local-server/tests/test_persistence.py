@@ -283,6 +283,39 @@ class TestWalkModeCollection:
         # save_fingerprint returns False when db is None, but loop still runs
         assert result["samples_requested"] == 3
 
+    def test_progress_callback_fires_for_each_sample(self):
+        """progress_callback should fire after each fingerprint is saved."""
+        service = self._make_service()
+        progress_log: list[tuple[int, int]] = []
+
+        def on_progress(saved: int, total: int) -> None:
+            progress_log.append((saved, total))
+
+        result = service.collect_and_save_fingerprints(
+            "Cocina", num_samples=5, progress_callback=on_progress,
+        )
+
+        assert result["fingerprints_saved"] == 5
+        # Callback should fire exactly once per saved fingerprint
+        assert len(progress_log) == 5
+        # Each call should report incrementing saved count
+        assert [s for s, _ in progress_log] == [1, 2, 3, 4, 5]
+        # total should always equal num_samples
+        assert all(t == 5 for _, t in progress_log)
+
+    def test_progress_callback_error_does_not_abort(self):
+        """A failing callback must not stop collection."""
+        service = self._make_service()
+
+        def bad_callback(saved: int, total: int) -> None:
+            raise RuntimeError("boom")
+
+        result = service.collect_and_save_fingerprints(
+            "Sala", num_samples=3, progress_callback=bad_callback,
+        )
+        # Collection should still complete despite callback errors
+        assert result["fingerprints_saved"] == 3
+
 
 # ── Tracking ─────────────────────────────────────────────────────────
 
@@ -507,3 +540,24 @@ class TestBackgroundCollectionAPI:
         resp = client.get("/spaces/collection-status/NonExistent")
         assert resp.status_code == 200
         assert resp.json()["status"] == "unknown"
+
+    def test_collection_status_shows_done_after_background(self, client):
+        """After background collection completes, status should be 'done' with correct count."""
+        from app.api.routes.spaces import get_space_service
+
+        # Register a space (sets initial status to "collecting")
+        client.post(
+            "/spaces",
+            json={"name": "ProgressTest", "space_type": "room", "samples": 5},
+        )
+
+        # Run the background collection synchronously (mock data = instant)
+        svc = get_space_service()
+        svc.run_background_collection("ProgressTest", num_samples=5)
+
+        # Now poll status — should be "done" with all samples saved
+        resp = client.get("/spaces/collection-status/ProgressTest")
+        body = resp.json()
+        assert body["status"] == "done"
+        assert body["fingerprints_saved"] == 5
+        assert body["samples_requested"] == 5

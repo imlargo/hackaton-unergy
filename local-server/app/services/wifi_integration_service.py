@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +507,7 @@ class WiFiIntegrationService:
         location: str,
         num_samples: int = 20,
         interval: float = 2.0,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
         """Collect multiple WiFi fingerprints with walk/movement mode.
 
@@ -518,11 +519,24 @@ class WiFiIntegrationService:
             location: The space/location name (e.g. "Cocina").
             num_samples: Number of scans to collect.
             interval: Seconds between scans.
+            progress_callback: Optional callable(saved_count, num_samples)
+                invoked after each fingerprint is saved so callers can
+                report real-time progress.
 
         Returns:
             A dict with collection results.
         """
         saved_count = 0
+
+        def _report_progress() -> None:
+            if progress_callback is not None:
+                try:
+                    progress_callback(saved_count, num_samples)
+                except Exception:
+                    logger.debug(
+                        "Progress callback error (collection continues): %s",
+                        location, exc_info=True,
+                    )
 
         if self._scanner is not None and _WIFIPOS_AVAILABLE and self._db is not None:
             # Use the real wifipos collect_fingerprint
@@ -542,6 +556,7 @@ class WiFiIntegrationService:
                 raw_data = [r.to_dict() for r in fp.readings]
                 self._db.save_fingerprint(location, raw_data, fp.timestamp)
                 saved_count += 1
+                _report_progress()
                 if i % 5 == 0 or i == num_samples:
                     logger.info(
                         "  ▸ [walk] '%s' sample %d/%d saved (%d networks).",
@@ -555,6 +570,7 @@ class WiFiIntegrationService:
             is_mock = first_scan.get("source") == "mock"
             self.save_fingerprint(location, first_scan)
             saved_count += 1
+            _report_progress()
             logger.info(
                 "  ▸ [walk] '%s' sample 1/%d saved (source=%s).",
                 location, num_samples, first_scan.get("source", "unknown"),
@@ -565,6 +581,7 @@ class WiFiIntegrationService:
                 scan = self.scan_current_environment()
                 self.save_fingerprint(location, scan)
                 saved_count += 1
+                _report_progress()
                 if (i + 1) % 5 == 0 or i + 1 == num_samples:
                     logger.info(
                         "  ▸ [walk] '%s' sample %d/%d saved.",

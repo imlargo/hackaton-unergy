@@ -123,11 +123,21 @@ class SpaceService:
             space_name, num_samples,
         )
 
+        def _on_progress(saved: int, total: int) -> None:
+            """Update the collection status dict after each fingerprint."""
+            self._set_collection_status(space_name, {
+                "status": "collecting",
+                "samples_requested": total,
+                "fingerprints_saved": saved,
+                "model_trained": False,
+            })
+
         try:
             collection = self._wifi_service.collect_and_save_fingerprints(
                 location=space_name,
                 num_samples=num_samples,
                 interval=2.0,
+                progress_callback=_on_progress,
             )
             logger.info(
                 "🔄 [background] Collection done for '%s': %d/%d fingerprints saved.",
