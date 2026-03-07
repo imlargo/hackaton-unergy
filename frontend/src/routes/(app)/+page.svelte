@@ -199,12 +199,26 @@
 				const isNew = !currentLocation ||
 					newPrediction.timestamp !== currentLocation.timestamp;
 				if (isNew) {
-					locationUpdating = true;
-					currentLocation = newPrediction;
-					lastUpdated = newPrediction.timestamp ?? new Date().toISOString();
-					predictionCount++;
-					addToHistory(newPrediction);
-					setTimeout(() => { locationUpdating = false; }, LOCATION_UPDATE_FLASH_MS);
+					const locationChanged = currentLocation?.location !== newPrediction.location;
+					if (locationChanged && currentLocation) {
+						// Location changed: clear → brief skeleton → new value
+						locationUpdating = true;
+						currentLocation = null;
+						await new Promise(r => setTimeout(r, LOCATION_UPDATE_FLASH_MS));
+						currentLocation = newPrediction;
+						lastUpdated = newPrediction.timestamp ?? new Date().toISOString();
+						predictionCount++;
+						addToHistory(newPrediction);
+						locationUpdating = false;
+					} else {
+						// Same location, just updated confidence/timestamp — flash transition
+						locationUpdating = true;
+						currentLocation = newPrediction;
+						lastUpdated = newPrediction.timestamp ?? new Date().toISOString();
+						predictionCount++;
+						addToHistory(newPrediction);
+						setTimeout(() => { locationUpdating = false; }, LOCATION_UPDATE_FLASH_MS);
+					}
 				}
 			}
 		} catch (err) {
@@ -595,8 +609,8 @@
 					<!-- Current Location Display -->
 					<div class="flex-1 space-y-5">
 						<div class="flex items-center gap-4">
-							<div class={`flex size-16 items-center justify-center rounded-2xl transition-colors duration-300 ${trackingActive ? 'bg-emerald-500/10' : predicting ? 'bg-primary/10' : 'bg-muted'}`}>
-								{#if predicting}
+							<div class={`flex size-16 items-center justify-center rounded-2xl transition-colors duration-300 ${trackingActive ? 'bg-emerald-500/10' : (predicting || locationUpdating) ? 'bg-primary/10' : 'bg-muted'}`}>
+								{#if predicting || (locationUpdating && !currentLocation)}
 									<Loader2 class="size-8 animate-spin text-primary" />
 								{:else if currentLocation && currentLocation.location !== 'unknown'}
 									{@const LocIcon = getSpaceIcon(
@@ -609,9 +623,9 @@
 							</div>
 							<div class="min-w-0 flex-1">
 								<p class="text-sm text-muted-foreground">
-									{predicting ? 'Detectando ubicación…' : trackingActive ? 'Estás en' : 'Última ubicación'}
+									{(predicting || (locationUpdating && !currentLocation)) ? 'Detectando ubicación…' : trackingActive ? 'Estás en' : 'Última ubicación'}
 								</p>
-								{#if predicting}
+								{#if predicting || (locationUpdating && !currentLocation)}
 									<div class="mt-1 space-y-2">
 										<div class="h-8 w-48 animate-pulse rounded-lg bg-primary/10"></div>
 										<div class="h-4 w-32 animate-pulse rounded-md bg-muted"></div>
