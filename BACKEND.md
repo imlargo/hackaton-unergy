@@ -21,8 +21,8 @@ hackaton-unergy/
 │   │   │   ├── energy_event.py      # (placeholder) Evento energético
 │   │   │   └── alert.py             # (placeholder) Alerta
 │   │   ├── repositories/
-│   │   │   ├── user_repository.py   # Persistencia mock de usuarios
-│   │   │   └── space_repository.py  # Persistencia mock de espacios
+│   │   │   ├── user_repository.py   # Persistencia mock de usuarios (in-memory)
+│   │   │   └── space_repository.py  # Persistencia real de espacios (JSON en disco)
 │   │   ├── services/
 │   │   │   ├── auth_service.py      # Registro, login, JWT
 │   │   │   ├── space_service.py     # Gestión de espacios
@@ -31,8 +31,11 @@ hackaton-unergy/
 │   │       ├── auth.py              # POST /auth/register, /auth/login, GET /auth/me
 │   │       ├── spaces.py            # POST /spaces, GET /spaces, GET /spaces/{id}
 │   │       └── instructions.py      # GET /instructions/register-space, /instructions/wifi-status
+│   ├── data/
+│   │   └── spaces.json          # Persistencia de espacios (creado automáticamente)
 │   └── tests/
-│       └── test_api.py              # 17 tests
+│       ├── test_api.py              # 17 tests (endpoints)
+│       └── test_persistence.py      # 10 tests (persistencia JSON, escaneo WiFi nativo)
 └── remote-server/           # Hub WebSocket en tiempo real
     ├── main.py              # Punto de entrada
     ├── requirements.txt     # Dependencias Python
@@ -73,7 +76,7 @@ uvicorn main:app --reload --port 8001
 ### Ejecutar tests
 
 ```bash
-# Tests del servidor local (17 tests)
+# Tests del servidor local (27 tests: 17 endpoints + 10 persistencia/WiFi)
 cd local-server && python -m pytest tests/ -v
 
 # Tests del servidor remoto (4 tests)
@@ -175,26 +178,33 @@ local-server/
         └── wifi_integration_service.py  ← Wrapper/adaptador
 ```
 
-El servicio `WiFiIntegrationService`:
-1. Importa desde `wifipos` (el paquete instalado) si está disponible
-2. Si no está disponible (CI, desarrollo sin WiFi), usa datos mock automáticamente
-3. Expone métodos simples: `scan_current_environment()`, `get_setup_instructions()`, `get_current_location()`
+El servicio `WiFiIntegrationService` tiene una **cadena de escaneo con fallback**:
 
-Para usar el módulo real:
+1. **wifipos scanner** — si el paquete está instalado (`pip install -e wifi-positioning/`)
+2. **nmcli nativo** — escaneo directo via NetworkManager (Linux)
+3. **iwlist nativo** — escaneo directo via wireless-tools (Linux)
+4. **Mock data** — último recurso para CI/testing sin WiFi
+
+El campo `source` en los resultados indica qué método se usó:
+- `"wifipos_scanner"` → módulo completo
+- `"native_linux"` → nmcli o iwlist
+- `"mock"` → datos de prueba
+
+Para usar el módulo completo:
 ```bash
 pip install -e wifi-positioning/
 ```
 
-## Qué está mockeado actualmente
+## Estado actual de la persistencia y datos
 
-| Componente | Estado | Cómo reemplazar |
-|-----------|--------|-----------------|
-| Base de datos de usuarios | In-memory (`UserRepository`) | Reemplazar con SQLAlchemy/Tortoise ORM |
-| Base de datos de espacios | In-memory (`SpaceRepository`) | Reemplazar con SQLAlchemy/Tortoise ORM |
-| Escaneo WiFi | Mock si `wifipos` no está instalado | Instalar `wifipos` con `pip install -e wifi-positioning/` |
-| Predicción de ubicación | Retorna "unknown" sin modelo entrenado | Entrenar modelo con `wifipos train` |
+| Componente | Estado | Almacenamiento |
+|-----------|--------|---------------|
+| **Espacios** | ✅ Persistente | JSON en disco (`data/spaces.json`) — sobrevive reinicios |
+| **Datos WiFi** | ✅ Real | Guardados con cada espacio — escaneo real via wifipos/nmcli/iwlist |
+| **Usuarios** | ⚠️ In-memory | `UserRepository` — se pierde al reiniciar |
+| **Predicción ubicación** | ⚠️ Placeholder | Retorna "unknown" sin modelo entrenado |
 
-### Cómo migrar a persistencia real
+### Migrar usuarios a persistencia real
 
 1. **Crear nueva implementación** del repositorio (e.g. `user_repository_sql.py`) que implemente los mismos métodos (`create`, `get_by_id`, `get_by_email`, etc.)
 2. **Cambiar la instanciación** en `main.py` — reemplazar `UserRepository()` por `UserRepositorySQL(db_session)`

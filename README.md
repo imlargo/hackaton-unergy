@@ -129,7 +129,7 @@ curl -X POST http://localhost:8000/auth/register \
 ## 🧪 Ejecutar tests
 
 ```bash
-# Tests del servidor local (17 tests)
+# Tests del servidor local (27 tests: 17 endpoints + 10 persistencia/WiFi)
 cd local-server
 python -m pytest tests/ -v
 
@@ -239,16 +239,27 @@ wifipos track --interval 3
 
 ---
 
-## 🗄️ Estado actual — Qué está mockeado
+## 🗄️ Estado actual — Persistencia y datos reales
 
-| Componente | Estado MVP | Para producción |
-|-----------|-----------|----------------|
-| Usuarios | In-memory (`UserRepository`) | Reemplazar con SQLAlchemy/Tortoise ORM |
-| Espacios | In-memory (`SpaceRepository`) | Reemplazar con SQLAlchemy/Tortoise ORM |
-| Escaneo WiFi | Mock si `wifipos` no está instalado | Instalar `wifipos` + hardware WiFi real |
-| Predicción ubicación | Retorna "unknown" sin modelo | Entrenar con `wifipos train` |
+| Componente | Estado | Almacenamiento |
+|-----------|--------|---------------|
+| **Espacios** | ✅ Persistente | JSON en disco (`local-server/data/spaces.json`) — sobrevive reinicios |
+| **Datos WiFi** | ✅ Real | Captura real de redes cercanas (wifipos → nmcli → iwlist → mock como último recurso) |
+| **Usuarios** | ⚠️ In-memory (`UserRepository`) | Se pierde al reiniciar — migrar a SQLAlchemy para producción |
+| **Predicción ubicación** | ⚠️ Placeholder | Retorna "unknown" sin modelo entrenado — entrenar con `wifipos train` |
 
-### Migrar a persistencia real
+### Cadena de escaneo WiFi
+
+Al registrar un espacio, el servidor captura automáticamente las redes WiFi cercanas con esta prioridad:
+
+1. **wifipos scanner** — módulo completo si está instalado
+2. **nmcli** — NetworkManager CLI nativo (Linux)
+3. **iwlist** — wireless-tools nativo (Linux)
+4. **Mock data** — último recurso (CI/testing)
+
+El campo `source` en `wifi_metadata` siempre indica qué método se usó.
+
+### Migrar usuarios a persistencia real
 
 1. Crear nueva implementación del repositorio (e.g. `user_repository_sql.py`)
 2. Cambiar instanciación en `main.py`: `UserRepository()` → `UserRepositorySQL(session)`
@@ -272,5 +283,6 @@ wifipos track --interval 3
 
 ## 📖 Documentación adicional
 
+- **[FLOW.md](./FLOW.md)** — Flujo completo de la aplicación (diagramas, paso a paso)
 - **[BACKEND.md](./BACKEND.md)** — Arquitectura detallada del backend, modelos de dominio y guía de migración
 - **[wifi-positioning/README.md](./wifi-positioning/README.md)** — Documentación técnica del módulo de posicionamiento WiFi

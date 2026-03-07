@@ -22,10 +22,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Instantiate mock repositories (in-memory persistence)
+# Instantiate repositories
 # ---------------------------------------------------------------------------
 user_repo = UserRepository()
-space_repo = SpaceRepository()
+space_repo = SpaceRepository()  # JSON-persistent at data/spaces.json
 
 # ---------------------------------------------------------------------------
 # Instantiate services
